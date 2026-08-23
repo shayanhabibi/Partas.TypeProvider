@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.0</TargetFramework>
+        <DefineConstants>IS_DESIGNTIME</DefineConstants>
+        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+        <LangVersion>latest</LangVersion>
+        <RootNamespace>Partas.TypeProvider</RootNamespace>
+        <AssemblyName>Partas.TypeProvider</AssemblyName>
+        <PackageId>Partas.TypeProvider</PackageId>
+        <OutputType>Library</OutputType>
+        <Title>Partas.TypeProvider</Title>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="../../README.md" Pack="true" PackagePath="\"/>
+        <Compile Include="VirtualDirParser.fs" />
+        <Compile Include="Git.fs" />
+        <Compile Include="Library.fs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="FSharp.TypeProviders.SDK" Version="8.11.0">
+            <PrivateAssets>all</PrivateAssets>
+        </PackageReference>
+        <PackageReference Update="FSharp.Core" Version="10.1.303">
+            <ExcludeAssets>all</ExcludeAssets>
+        </PackageReference>
+    </ItemGroup>
+
+</Project>

@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Build.fsproj" />
+  <Project Path="src/Partas.TypeProvider/Partas.TypeProvider.fsproj" />
+  <Project Path="tests/Partas.TypeProvider.Tests/Partas.TypeProvider.Tests.fsproj" />
+</Solution>

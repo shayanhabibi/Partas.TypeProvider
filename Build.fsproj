@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <!-- The `Framework` template option rewrites every literal `net10.0` in
+             the template, and the build CLI has to stay on net10.0: Partas.Build
+             ships net10.0 only. Composing the moniker from two pieces keeps this
+             one occurrence out of that rewrite. The CLI is infrastructure and is
+             never shipped, so its framework need not match the solution's — an
+             SDK 10 CLI builds and tests net9.0/net8.0 projects fine. -->
+        <_BuildCliFramework>net10</_BuildCliFramework>
+        <TargetFramework>$(_BuildCliFramework).0</TargetFramework>
+        <RootNamespace>Build</RootNamespace>
+        <NoWarn>NU1608;NU1901;NU1904</NoWarn>
+        <!-- The build CLI is infrastructure; it is never shipped. -->
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="Build\Spec.fs"/>
+        <Compile Include="Build\Program.fs"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Bump the F# SDK's implicit FSharp.Core reference from 10.0.101.
+             Without this, the build emits NU1605 because Partas.Build 0.1.0
+             wants FSharp.Core (>= 10.1.400) while the implicit reference pins
+             10.0.101. `Update` modifies the existing implicit reference
+             instead of adding a duplicate (which would trigger NU1504). -->
+        <PackageReference Update="FSharp.Core" Version="10.1.400"/>
+        <PackageReference Include="EasyBuild.FileSystemProvider" Version="1.1.0"/>
+        <PackageReference Include="Fake.Core.UserInput" Version="6.1.4"/>
+        <PackageReference Include="Fake.DotNet.Cli" Version="6.1.4"/>
+        <PackageReference Include="Fake.DotNet.Testing.Expecto" Version="6.1.4"/>
+        <PackageReference Include="Fake.Tools.Git" Version="6.1.4"/>
+        <PackageReference Include="Partas.Build" Version="0.1.0"/>
+        <PackageReference Include="FsToolkit.ErrorHandling" Version="5.2.0"/>
+        <PackageReference Include="Fake.Core.ReleaseNotes" Version="6.1.4"/>
+        <PackageReference Include="Partas.GitNet" Version="3.0.0"/>
+    </ItemGroup>
+
+</Project>

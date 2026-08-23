@@ -1,0 +1,464 @@
+/// Reading of git repository state for the type provider.
+///
+/// Structure - ref, remote and submodule *names* - is read straight out of the
+/// `.git` directory at design time, so expanding the provided types never
+/// spawns a process. Volatile values - shas, dirtiness, anything needing
+/// object or history traversal - are deferred to the `Runtime` module, which
+/// shells out to `git` in the consuming program instead.
+module Partas.TypeProvider.Git
+
+open System
+open System.Diagnostics
+open System.IO
+open System.Text
+
+let private startsWith (prefix: string) (value: string) =
+    value.StartsWith(prefix, StringComparison.Ordinal)
+
+/// Minimal reader for the git config format. Covers section headers with
+/// optional quoted subsections, `key = value`, comments and quoted values.
+/// Not the full grammar: no `include`, no line continuations.
+module Config =
+
+    type Entry =
+        { Section: string
+          Subsection: string
+          Key: string
+          Value: string }
+
+    /// Reads a value, honouring backslash escapes and stopping at an inline
+    /// comment that falls outside a quoted run.
+    let private readValue (raw: string) =
+        let sb = StringBuilder()
+        let mutable inQuotes = false
+        let mutable stop = false
+        let mutable i = 0
+
+        while not stop && i < raw.Length do
+            let c = raw.[i]
+
+            if c = '\\' && i + 1 < raw.Length then
+                i <- i + 1
+
+                sb.Append(
+                    match raw.[i] with
+                    | 'n' -> '\n'
+                    | 't' -> '\t'
+                    | other -> other
+                )
+                |> ignore
+            elif c = '"' then
+                inQuotes <- not inQuotes
+            elif (c = '#' || c = ';') && not inQuotes then
+                stop <- true
+            else
+                sb.Append c |> ignore
+
+            i <- i + 1
+
+        sb.ToString().Trim()
+
+    let parse (text: string) =
+        let entries = ResizeArray()
+        let mutable section = ""
+        let mutable subsection = ""
+
+        for rawLine in text.Split('\n') do
+            let line = rawLine.Trim()
+
+            if line = "" || startsWith "#" line || startsWith ";" line then
+                ()
+            elif startsWith "[" line then
+                let close = line.IndexOf ']'
+
+                if close > 0 then
+                    let header = line.Substring(1, close - 1).Trim()
+                    let firstQuote = header.IndexOf '"'
+                    let lastQuote = header.LastIndexOf '"'
+
+                    if firstQuote >= 0 then
+                        section <- header.Substring(0, firstQuote).Trim().ToLowerInvariant()
+
+                        subsection <-
+                            if lastQuote > firstQuote then
+                                header.Substring(firstQuote + 1, lastQuote - firstQuote - 1)
+                            else
+                                ""
+                    else
+                        section <- header.ToLowerInvariant()
+                        subsection <- ""
+            else
+                let eq = line.IndexOf '='
+
+                if eq > 0 then
+                    entries.Add
+                        { Section = section
+                          Subsection = subsection
+                          Key = line.Substring(0, eq).Trim().ToLowerInvariant()
+                          Value = readValue (line.Substring(eq + 1)) }
+
+        List.ofSeq entries
+
+    let parseFile (path: string) =
+        if File.Exists path then
+            try
+                parse (File.ReadAllText path)
+            with _ ->
+                []
+        else
+            []
+
+type RepoLayout =
+    { GitDir: string
+      CommonDir: string
+      WorkTree: string }
+
+type Ref =
+    { Name: string
+      FullName: string
+      Target: string }
+
+type Remote =
+    { Name: string
+      FetchUrl: string
+      PushUrl: string }
+
+type Submodule =
+    { Name: string
+      Path: string
+      Url: string
+      Branch: string }
+
+/// In submodules and linked worktrees `.git` is a file holding `gitdir: <path>`.
+let private resolveGitDirFile (dotGitFile: string) =
+    try
+        let text = File.ReadAllText(dotGitFile).Trim()
+
+        if startsWith "gitdir:" text then
+            let target = text.Substring(7).Trim()
+
+            if Path.IsPathRooted target then
+                target
+            else
+                Path.Combine(Path.GetDirectoryName dotGitFile, target)
+            |> Path.GetFullPath
+            |> Some
+        else
+            None
+    with _ ->
+        None
+
+/// Walks up from `startDir` looking for a working tree. Returns `None` outside
+/// a repository rather than throwing, so the provider can degrade legibly.
+let discover (startDir: string) =
+    let rec walk (dir: DirectoryInfo) =
+        if isNull (box dir) then
+            None
+        else
+            let dotGit = Path.Combine(dir.FullName, ".git")
+
+            if Directory.Exists dotGit then
+                Some(dir.FullName, Path.GetFullPath dotGit)
+            else
+                match (if File.Exists dotGit then resolveGitDirFile dotGit else None) with
+                | Some gitDir -> Some(dir.FullName, gitDir)
+                | None -> walk dir.Parent
+
+    try
+        walk (DirectoryInfo startDir)
+        |> Option.map (fun (workTree, gitDir) ->
+            let commonDir =
+                let marker = Path.Combine(gitDir, "commondir")
+
+                if File.Exists marker then
+                    let target = File.ReadAllText(marker).Trim()
+
+                    if Path.IsPathRooted target then
+                        target
+                    else
+                        Path.Combine(gitDir, target)
+                    |> Path.GetFullPath
+                else
+                    gitDir
+
+            { GitDir = gitDir
+              CommonDir = commonDir
+              WorkTree = workTree })
+    with _ ->
+        None
+
+let private readPackedRefs (commonDir: string) =
+    let path = Path.Combine(commonDir, "packed-refs")
+
+    if not (File.Exists path) then
+        []
+    else
+        try
+            File.ReadAllLines path
+            |> Array.toList
+            |> List.choose (fun line ->
+                let line = line.Trim()
+
+                // `^` lines carry the peeled target of the preceding tag.
+                if line = "" || startsWith "#" line || startsWith "^" line then
+                    None
+                else
+                    let sp = line.IndexOf ' '
+
+                    if sp > 0 then
+                        Some(line.Substring(sp + 1).Trim(), line.Substring(0, sp))
+                    else
+                        None)
+        with _ ->
+            []
+
+let private readLooseRefs (commonDir: string) (prefix: string) =
+    let root = Path.Combine(commonDir, prefix.Replace('/', Path.DirectorySeparatorChar))
+
+    if not (Directory.Exists root) then
+        []
+    else
+        try
+            Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            |> Seq.map (fun file ->
+                let name =
+                    file
+                        .Substring(root.Length)
+                        .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                        .Replace('\\', '/')
+
+                let sha =
+                    try
+                        File.ReadAllText(file).Trim()
+                    with _ ->
+                        ""
+
+                name, sha)
+            |> Seq.filter (fun (name, _) -> name <> "" && not (startsWith "." name))
+            |> List.ofSeq
+        with _ ->
+            []
+
+/// All refs under a prefix such as `refs/heads`, with loose refs shadowing
+/// anything of the same name in `packed-refs`.
+let refsUnder (layout: RepoLayout) (prefix: string) =
+    let prefix = prefix.TrimEnd '/'
+
+    let packed =
+        readPackedRefs layout.CommonDir
+        |> List.choose (fun (full, sha) ->
+            if startsWith (prefix + "/") full then
+                Some(full.Substring(prefix.Length + 1), sha)
+            else
+                None)
+
+    readLooseRefs layout.CommonDir prefix @ packed
+    |> List.distinctBy fst
+    |> List.map (fun (name, sha) ->
+        { Name = name
+          FullName = prefix + "/" + name
+          Target = sha })
+    |> List.sortBy (fun r -> r.Name)
+
+let private grouped section (entries: Config.Entry list) =
+    entries
+    |> List.filter (fun e -> e.Section = section && e.Subsection <> "")
+    |> List.groupBy (fun e -> e.Subsection)
+    |> List.map (fun (name, es) ->
+        let get key =
+            es
+            |> List.tryPick (fun e -> if e.Key = key then Some e.Value else None)
+            |> Option.defaultValue ""
+
+        name, get)
+    |> List.sortBy fst
+
+let repoConfig (layout: RepoLayout) =
+    Config.parseFile (Path.Combine(layout.CommonDir, "config"))
+
+let remotes (layout: RepoLayout) =
+    repoConfig layout
+    |> grouped "remote"
+    |> List.map (fun (name, get) ->
+        let url = get "url"
+
+        { Name = name
+          FetchUrl = url
+          PushUrl =
+            match get "pushurl" with
+            | "" -> url
+            | push -> push })
+
+let submodules (layout: RepoLayout) =
+    Config.parseFile (Path.Combine(layout.WorkTree, ".gitmodules"))
+    |> grouped "submodule"
+    |> List.map (fun (name, get) ->
+        { Name = name
+          Path = get "path"
+          Url = get "url"
+          Branch = get "branch" })
+
+/// The configured upstream of a local branch, in `remote/branch` shorthand.
+let upstreamOf (entries: Config.Entry list) (branch: string) =
+    let get key =
+        entries
+        |> List.tryPick (fun e ->
+            if e.Section = "branch" && e.Subsection = branch && e.Key = key then
+                Some e.Value
+            else
+                None)
+        |> Option.defaultValue ""
+
+    match get "remote", get "merge" with
+    | "", _
+    | _, "" -> ""
+    | remote, merge ->
+        let short =
+            if startsWith "refs/heads/" merge then
+                merge.Substring 11
+            else
+                merge
+
+        if remote = "." then short else remote + "/" + short
+
+/// Functions invoked from erased quotations - these run in the *consuming*
+/// program, not in the compiler, and must never throw.
+module Runtime =
+
+    /// Prefixed to every invocation: never page, never prompt for credentials,
+    /// and never take the optional index lock, which would otherwise contend
+    /// with the user's own git commands.
+    let private safetyArgs = "--no-pager -c credential.helper= -c core.fsmonitor=false"
+
+    let private defaultTimeoutMs = 2000
+
+    let rec private resolve (commonDir: string) (refName: string) depth =
+        if depth > 5 || String.IsNullOrWhiteSpace refName then
+            ""
+        else
+            let loose = Path.Combine(commonDir, refName.Replace('/', Path.DirectorySeparatorChar))
+
+            let raw =
+                if File.Exists loose then
+                    try
+                        File.ReadAllText(loose).Trim()
+                    with _ ->
+                        ""
+                else
+                    let packed = Path.Combine(commonDir, "packed-refs")
+
+                    if not (File.Exists packed) then
+                        ""
+                    else
+                        try
+                            File.ReadAllLines packed
+                            |> Array.tryPick (fun line ->
+                                let line = line.Trim()
+                                let sp = line.IndexOf ' '
+
+                                if sp > 0 && not (startsWith "^" line) && line.Substring(sp + 1).Trim() = refName then
+                                    Some(line.Substring(0, sp))
+                                else
+                                    None)
+                            |> Option.defaultValue ""
+                        with _ ->
+                            ""
+
+            if startsWith "ref:" raw then
+                resolve commonDir (raw.Substring(4).Trim()) (depth + 1)
+            else
+                raw
+
+    /// Resolves a ref name such as `refs/heads/main` to a sha, following
+    /// symbolic refs. Returns "" when the ref no longer exists.
+    let resolveRef (commonDir: string) (refName: string) = resolve commonDir refName 0
+
+    let private headText (gitDir: string) =
+        let path = Path.Combine(gitDir, "HEAD")
+
+        if File.Exists path then
+            try
+                File.ReadAllText(path).Trim()
+            with _ ->
+                ""
+        else
+            ""
+
+    /// The checked-out branch name, or "" when HEAD is detached.
+    let headBranch (gitDir: string) =
+        let text = headText gitDir
+
+        if startsWith "ref: refs/heads/" text then
+            text.Substring(16).Trim()
+        else
+            ""
+
+    /// The sha HEAD resolves to. "" in a repository with no commits yet.
+    let headSha (gitDir: string) (commonDir: string) =
+        let text = headText gitDir
+
+        if startsWith "ref:" text then
+            resolveRef commonDir (text.Substring(4).Trim())
+        else
+            text
+
+    let isDetached (gitDir: string) =
+        let text = headText gitDir
+        text <> "" && not (startsWith "ref:" text)
+
+    /// Runs `git` in `workTree`, returning stdout on success and `None` on
+    /// failure, non-zero exit, timeout, or a missing `git`.
+    let tryExecTimeout (timeoutMs: int) (workTree: string) (args: string) =
+        try
+            let psi = ProcessStartInfo("git", safetyArgs + " " + args)
+            psi.WorkingDirectory <- workTree
+            psi.UseShellExecute <- false
+            psi.CreateNoWindow <- true
+            psi.RedirectStandardInput <- true
+            psi.RedirectStandardOutput <- true
+            psi.RedirectStandardError <- true
+            psi.Environment.["GIT_OPTIONAL_LOCKS"] <- "0"
+            psi.Environment.["GIT_TERMINAL_PROMPT"] <- "0"
+            psi.Environment.["GCM_INTERACTIVE"] <- "never"
+
+            use proc = new Process(StartInfo = psi)
+
+            if not (proc.Start()) then
+                None
+            else
+                // Drain both pipes concurrently; a full pipe buffer would
+                // otherwise deadlock against WaitForExit.
+                let stdout = proc.StandardOutput.ReadToEndAsync()
+                let stderr = proc.StandardError.ReadToEndAsync()
+                proc.StandardInput.Close()
+
+                if not (proc.WaitForExit timeoutMs) then
+                    (try
+                        proc.Kill()
+                     with _ ->
+                         ())
+
+                    None
+                elif stdout.Wait 500 && stderr.Wait 500 && proc.ExitCode = 0 then
+                    Some(stdout.Result.Trim())
+                else
+                    None
+        with _ ->
+            None
+
+    let tryExec (workTree: string) (args: string) =
+        tryExecTimeout defaultTimeoutMs workTree args
+
+    /// Escape hatch for arbitrary read-only git commands. Returns "" on failure.
+    let exec (workTree: string) (args: string) =
+        tryExec workTree args |> Option.defaultValue ""
+
+    /// Whether a usable `git` is on PATH in the consuming environment.
+    let isAvailable () =
+        tryExec (Path.GetTempPath()) "--version" |> Option.isSome
+
+    /// True when the working tree or index has changes.
+    let isDirty (workTree: string) =
+        match tryExec workTree "status --porcelain" with
+        | Some output -> output <> ""
+        | None -> false
