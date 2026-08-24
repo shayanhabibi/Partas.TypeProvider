@@ -268,6 +268,16 @@ module Commands =
         Pipelines.executeTests
     }
 
+    let docs = command "docs" {
+        description "Builds or watches documentation"
+        Command.pipeline {
+            input {
+                let! watch = Options.watch
+                return Stages.buildDocs watch
+            }
+        }
+    }
+
 
 let mainBuilder argsv =
     rootCommand argsv {
@@ -280,6 +290,7 @@ let mainBuilder argsv =
         addCommand Commands.build
         addCommand Commands.pack
         addCommand Commands.publish
+        addCommand Commands.docs
     }
 
 [<EntryPoint>]

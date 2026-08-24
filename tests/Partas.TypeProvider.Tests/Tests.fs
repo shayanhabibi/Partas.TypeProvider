@@ -8,6 +8,7 @@ open Partas.TypeProvider.BuildHelper.Runtime
 /// The test project lives inside this repository, so the provider resolves
 /// against it.
 type Root = BuildHelperProvider<"", capabilityFullOverride = true>
+type MasterHead = Root.Git.Branches.master.Revision<"HEAD">
 
 /// Builds a `.git` directory out of plain files, so the design-time reader is
 /// exercised without needing the git binary.
@@ -271,10 +272,235 @@ let providerTests =
         }
 
         test "exposes runtime members without throwing" {
-            Root.Git.Head |> ignore
-            Root.Git.HeadBranch |> ignore
+            Root.Git.Head.IsAvailable() |> ignore
+            Root.Git.HeadBranch.IsAvailable() |> ignore
             Root.Git.IsDetached |> ignore
             Root.Git.IsDirty() |> ignore
             Expect.isTrue (Root.Git.IsGitAvailable()) "git is on PATH in this environment"
+        }
+
+        test "projects HEAD and its branch when available" {
+            Expect.isTrue (Root.Git.Head.IsAvailable()) "HEAD has a commit"
+            Expect.equal Root.Git.Head.Sha MasterHead.Sha "HEAD projection resolves the same commit"
+            Expect.equal Root.Git.Head.ShortSha MasterHead.ShortSha "HEAD projection exposes short SHA"
+            Expect.isNotEmpty Root.Git.Head.Date "HEAD projection exposes date"
+            Expect.isNotEmpty Root.Git.Head.Author "HEAD projection exposes author"
+            Expect.isNotEmpty Root.Git.Head.Message "HEAD projection exposes message"
+
+            if Root.Git.HeadBranch.IsAvailable() then
+                Expect.isNotEmpty Root.Git.HeadBranch.Name "branch projection exposes branch name"
+                Expect.equal Root.Git.HeadBranch.RefName ("refs/heads/" + Root.Git.HeadBranch.Name) "branch ref name"
+                Expect.equal Root.Git.HeadBranch.Sha Root.Git.Head.Sha "branch projection exposes HEAD commit"
+                Expect.equal Root.Git.HeadBranch.ShortSha Root.Git.Head.ShortSha "branch projection exposes short SHA"
+            else
+                Expect.isTrue Root.Git.IsDetached "unavailable branch projection means detached HEAD"
+        }
+
+        test "resolves a revision nested under a branch" {
+            Expect.equal MasterHead.Sha Root.Git.Head.Sha "revision resolves to the current HEAD"
+            Expect.equal MasterHead.ShortSha (MasterHead.Sha.Substring(0, 7)) "short SHA is abbreviated"
+            Expect.isNotEmpty MasterHead.Date "revision exposes the author date"
+            Expect.isNotEmpty MasterHead.Author "revision exposes the author"
+            Expect.isNotEmpty MasterHead.Message "revision exposes the commit subject"
+        }
+    ]
+
+[<Tests>]
+let comparisonTests =
+    testList "Git.Runtime comparison" [
+
+        // --- fixture-based: no real git objects, exercises the zero/empty fallback paths ---
+
+        test "commitsAhead returns 0 when git cannot resolve refs" {
+            withFixture (fun layout ->
+                // The fixture has fake hex SHAs but no real pack objects.
+                // git rev-list exits non-zero, so the result must fall back to 0.
+                Expect.equal
+                    (Git.Runtime.commitsAhead layout.WorkTree "refs/heads/main" "HEAD")
+                    0
+                    "falls back to 0 on git failure")
+        }
+
+        test "commitsBehind returns 0 when git cannot resolve refs" {
+            withFixture (fun layout ->
+                Expect.equal
+                    (Git.Runtime.commitsBehind layout.WorkTree "HEAD" "refs/heads/main")
+                    0
+                    "falls back to 0 on git failure")
+        }
+
+        test "latestTag returns empty when git describe fails" {
+            withFixture (fun layout ->
+                // git describe fails because there are no real commit objects.
+                Expect.equal (Git.Runtime.latestTag layout.WorkTree) "" "empty on failure")
+        }
+
+        test "latestTagDetails returns an all-empty record when no tag is reachable" {
+            withFixture (fun layout ->
+                let details = Git.Runtime.latestTagDetails layout.WorkTree
+                Expect.equal details.Sha "" "Sha empty"
+                Expect.equal details.ShortSha "" "ShortSha empty"
+                Expect.equal details.Date "" "Date empty"
+                Expect.equal details.Author "" "Author empty"
+                Expect.equal details.Message "" "Message empty")
+        }
+
+        test "latestTagRevisionDetails returns empty record regardless of expression when no tag exists" {
+            withFixture (fun layout ->
+                let details = Git.Runtime.latestTagRevisionDetails layout.WorkTree "~1"
+                Expect.equal details.Sha "" "expression is irrelevant when there is no tag")
+        }
+
+        test "commitsAheadOfUpstream returns 0 for a detached HEAD" {
+            withFixture (fun layout ->
+                File.WriteAllText(Path.Combine(layout.GitDir, "HEAD"), "8888888888888888888888888888888888888888\n")
+
+                Expect.equal
+                    (Git.Runtime.commitsAheadOfUpstream layout.WorkTree layout.GitDir layout.CommonDir)
+                    0
+                    "detached HEAD has no branch so no upstream")
+        }
+
+        test "commitsBehindUpstream returns 0 for a detached HEAD" {
+            withFixture (fun layout ->
+                File.WriteAllText(Path.Combine(layout.GitDir, "HEAD"), "8888888888888888888888888888888888888888\n")
+
+                Expect.equal
+                    (Git.Runtime.commitsBehindUpstream layout.WorkTree layout.GitDir layout.CommonDir)
+                    0
+                    "detached HEAD has no upstream")
+        }
+
+        test "commitsAheadOfUpstream returns 0 when the branch has no upstream" {
+            withFixture (fun layout ->
+                // feature/nested has no upstream entry in the fixture config
+                File.WriteAllText(Path.Combine(layout.GitDir, "HEAD"), "ref: refs/heads/feature/nested\n")
+
+                Expect.equal
+                    (Git.Runtime.commitsAheadOfUpstream layout.WorkTree layout.GitDir layout.CommonDir)
+                    0
+                    "no upstream configured for this branch")
+        }
+
+        test "commitsBehindUpstream returns 0 when the branch has no upstream" {
+            withFixture (fun layout ->
+                File.WriteAllText(Path.Combine(layout.GitDir, "HEAD"), "ref: refs/heads/feature/nested\n")
+
+                Expect.equal
+                    (Git.Runtime.commitsBehindUpstream layout.WorkTree layout.GitDir layout.CommonDir)
+                    0
+                    "no upstream configured for this branch")
+        }
+
+        // --- live repo: verifies real git interactions and mathematical properties ---
+
+        test "commitsAhead of HEAD against itself is zero" {
+            Expect.equal
+                (Git.Runtime.commitsAhead Root.Git.WorkingDirectory "HEAD" "HEAD")
+                0
+                "a symmetric range A..A is always empty"
+        }
+
+        test "commitsBehind of HEAD against itself is zero" {
+            Expect.equal
+                (Git.Runtime.commitsBehind Root.Git.WorkingDirectory "HEAD" "HEAD")
+                0
+                "a symmetric range A..A is always empty"
+        }
+
+        test "commitsAhead returns 0 for a nonexistent base ref" {
+            Expect.equal
+                (Git.Runtime.commitsAhead Root.Git.WorkingDirectory "refs/heads/does-not-exist" "HEAD")
+                0
+                "bad ref causes git to fail, result is 0 not an exception"
+        }
+
+        test "commitsAhead HEAD~1 HEAD is the inverse of commitsBehind HEAD HEAD~1" {
+            let wt = Root.Git.WorkingDirectory
+            let ahead = Git.Runtime.commitsAhead wt "HEAD~1" "HEAD"
+            let behind = Git.Runtime.commitsBehind wt "HEAD" "HEAD~1"
+            Expect.equal ahead behind "commitsAhead(X, Y) equals commitsBehind(Y, X)"
+            Expect.isTrue (ahead > 0) "HEAD is at least one commit ahead of its parent"
+        }
+
+        test "latestTag and latestTagDetails are consistent" {
+            let tag = Git.Runtime.latestTag Root.Git.WorkingDirectory
+            let details = Git.Runtime.latestTagDetails Root.Git.WorkingDirectory
+
+            if tag = "" then
+                Expect.equal details.Sha "" "no tag implies empty details"
+            else
+                Expect.isNotEmpty details.Sha "tag found so sha must be present"
+        }
+
+        test "commitsAheadOfUpstream and commitsBehindUpstream do not throw" {
+            Git.Runtime.commitsAheadOfUpstream Root.Git.WorkingDirectory Root.Git.GitDirectory Root.Git.CommonDirectory
+            |> ignore
+
+            Git.Runtime.commitsBehindUpstream Root.Git.WorkingDirectory Root.Git.GitDirectory Root.Git.CommonDirectory
+            |> ignore
+        }
+    ]
+
+[<Tests>]
+let comparisonProviderTests =
+    testList "GitProvider comparison" [
+
+        test "CommitsAhead of HEAD against itself is zero" {
+            Expect.equal (Root.Git.CommitsAhead("HEAD", "HEAD")) 0 "symmetric range"
+        }
+
+        test "CommitsBehind of HEAD against itself is zero" {
+            Expect.equal (Root.Git.CommitsBehind("HEAD", "HEAD")) 0 "symmetric range"
+        }
+
+        test "CommitsAhead with a nonexistent ref returns 0 without throwing" {
+            Expect.equal (Root.Git.CommitsAhead("refs/does-not-exist", "HEAD")) 0 "bad ref falls back to 0"
+        }
+
+        test "LatestTag members are all accessible without throwing" {
+            Root.Git.LatestTag.IsAvailable() |> ignore
+            Root.Git.LatestTag.Name |> ignore
+            Root.Git.LatestTag.Sha |> ignore
+            Root.Git.LatestTag.ShortSha |> ignore
+            Root.Git.LatestTag.Date |> ignore
+            Root.Git.LatestTag.Author |> ignore
+            Root.Git.LatestTag.Message |> ignore
+        }
+
+        test "LatestTag details are consistent with IsAvailable" {
+            if Root.Git.LatestTag.IsAvailable() then
+                Expect.isNotEmpty Root.Git.LatestTag.Name "Name is non-empty when available"
+                Expect.isNotEmpty Root.Git.LatestTag.Sha "Sha is non-empty when available"
+            else
+                Expect.equal Root.Git.LatestTag.Name "" "Name is empty when unavailable"
+                Expect.equal Root.Git.LatestTag.Sha "" "Sha is empty when unavailable"
+        }
+
+        test "HeadBranch upstream comparison members do not throw" {
+            Root.Git.HeadBranch.CommitsAheadOfUpstream() |> ignore
+            Root.Git.HeadBranch.CommitsBehindUpstream() |> ignore
+        }
+
+        test "branch CommitsAhead against its own ref is zero" {
+            // A ref is never ahead of itself.
+            Expect.equal
+                (Root.Git.Branches.master.CommitsAhead("refs/heads/master"))
+                0
+                "refs/heads/master..refs/heads/master is empty"
+        }
+
+        test "branch CommitsBehind against its own ref is zero" {
+            Expect.equal
+                (Root.Git.Branches.master.CommitsBehind("refs/heads/master"))
+                0
+                "refs/heads/master..refs/heads/master is empty"
+        }
+
+        test "branch CommitsAhead with a bad ref returns 0 without throwing" {
+            Expect.equal
+                (Root.Git.Branches.master.CommitsAhead("refs/does-not-exist"))
+                0
+                "bad ref falls back to 0"
         }
     ]

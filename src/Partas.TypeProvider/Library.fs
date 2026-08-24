@@ -211,28 +211,171 @@ module private Helpers =
                 constString "WorkingDirectory" workTree $"<summary>The root of the working tree.{addendumValue workTree}</summary>"
             ]
 
-            // Volatile values, resolved when the consuming program runs.
-            let headProperty =
-                ProvidedProperty(
-                    "Head",
-                    typeof<string>,
+            // Projections over volatile HEAD state. The values shown in XML docs
+            // are design-time hints only; all properties read the repository at
+            // runtime.
+            let headDetails = Git.Runtime.revisionDetails workTree "HEAD" "HEAD"
+            let designTimeBranch = Git.Runtime.headBranch gitDir
+
+            let addRevisionMembers
+                (projection: ProvidedTypeDefinition)
+                (baseRef: string)
+                (expression: string)
+                (details: Git.Runtime.RevisionDetails)
+                =
+                let addRuntimeProperty name value hint description =
+                    let property =
+                        ProvidedProperty(
+                            name,
+                            typeof<string>,
+                            isStatic = true,
+                            getterCode = fun _ -> value
+                        )
+
+                    property.AddXmlDoc
+                        $"<summary>{description}, resolved at runtime.{addendumValue hint}</summary>"
+
+                    property
+
+                let sha =
+                    addRuntimeProperty
+                        "Sha"
+                        <@@ Git.Runtime.resolveRevision workTree baseRef expression @@>
+                        details.Sha
+                        "The full commit SHA"
+
+                let shortSha =
+                    addRuntimeProperty
+                        "ShortSha"
+                        <@@ Git.Runtime.shortRevision workTree baseRef expression @@>
+                        details.ShortSha
+                        "The abbreviated commit SHA"
+
+                let date =
+                    addRuntimeProperty
+                        "Date"
+                        <@@ (Git.Runtime.revisionDetails workTree baseRef expression).Date @@>
+                        details.Date
+                        "The author date of the commit"
+
+                let author =
+                    addRuntimeProperty
+                        "Author"
+                        <@@ (Git.Runtime.revisionDetails workTree baseRef expression).Author @@>
+                        details.Author
+                        "The commit author"
+
+                let message =
+                    addRuntimeProperty
+                        "Message"
+                        <@@ (Git.Runtime.revisionDetails workTree baseRef expression).Message @@>
+                        details.Message
+                        "The commit subject"
+
+                projection.AddMembers [ sha; shortSha; date; author; message ]
+
+            let headProjection =
+                ProvidedTypeDefinition("Head", Some typeof<obj>, hideObjectMethods = true)
+
+            headProjection.AddXmlDoc
+                $"<summary>A projection over the commit currently resolved by <c>HEAD</c>. Use <c>IsAvailable</c> before reading its values.{addendumValue headDetails.Sha}</summary>"
+
+            let headAvailable =
+                ProvidedMethod(
+                    "IsAvailable",
+                    [],
+                    typeof<bool>,
                     isStatic = true,
-                    getterCode = fun _ -> <@@ Git.Runtime.headSha gitDir commonDir @@>
+                    invokeCode = fun _ -> <@@ Git.Runtime.headIsAvailable gitDir commonDir @@>
                 )
 
-            headProperty.AddXmlDoc
-                "<summary>The commit sha <c>HEAD</c> currently resolves to, read at runtime. Empty when the repository has no commits.</summary>"
+            headAvailable.AddXmlDoc
+                "<summary>Whether <c>HEAD</c> currently resolves to an available commit.</summary>"
 
-            let headBranchProperty =
+            headProjection.AddMember headAvailable
+
+            addRevisionMembers headProjection "HEAD" "HEAD" headDetails
+
+            let headBranchProjection =
+                ProvidedTypeDefinition("HeadBranch", Some typeof<obj>, hideObjectMethods = true)
+
+            headBranchProjection.AddXmlDoc
+                $"<summary>A projection over the checked-out branch. It is unavailable for detached or unborn <c>HEAD</c>. Use <c>IsAvailable</c> before reading its values.{addendumValue designTimeBranch}</summary>"
+
+            let branchAvailable =
+                ProvidedMethod(
+                    "IsAvailable",
+                    [],
+                    typeof<bool>,
+                    isStatic = true,
+                    invokeCode = fun _ -> <@@ Git.Runtime.headBranchIsAvailable gitDir commonDir @@>
+                )
+
+            branchAvailable.AddXmlDoc
+                "<summary>Whether <c>HEAD</c> currently names a branch with an available commit.</summary>"
+
+            let branchName =
                 ProvidedProperty(
-                    "HeadBranch",
+                    "Name",
                     typeof<string>,
                     isStatic = true,
                     getterCode = fun _ -> <@@ Git.Runtime.headBranch gitDir @@>
                 )
 
-            headBranchProperty.AddXmlDoc
-                "<summary>The checked-out branch name, read at runtime. Empty when <c>HEAD</c> is detached.</summary>"
+            branchName.AddXmlDoc
+                $"<summary>The checked-out branch name, resolved at runtime.{addendumValue designTimeBranch}</summary>"
+
+            let branchRefName =
+                ProvidedProperty(
+                    "RefName",
+                    typeof<string>,
+                    isStatic = true,
+                    getterCode = fun _ ->
+                        <@@
+                            let branch = Git.Runtime.headBranch gitDir
+                            if branch = "" then "" else "refs/heads/" + branch
+                        @@>
+                )
+
+            let designTimeBranchRef =
+                if designTimeBranch = "" then "" else "refs/heads/" + designTimeBranch
+
+            branchRefName.AddXmlDoc
+                $"<summary>The fully qualified checked-out branch ref name, resolved at runtime.{addendumValue designTimeBranchRef}</summary>"
+
+            let commitsAheadUpstreamMethod =
+                ProvidedMethod(
+                    "CommitsAheadOfUpstream",
+                    [],
+                    typeof<int>,
+                    isStatic = true,
+                    invokeCode = fun _ -> <@@ Git.Runtime.commitsAheadOfUpstream workTree gitDir commonDir @@>
+                )
+
+            commitsAheadUpstreamMethod.AddXmlDoc
+                "<summary>Commits in HEAD not yet pushed to the configured upstream. Returns 0 when HEAD is detached, no upstream is set, or git is unavailable.</summary>"
+
+            let commitsBehindUpstreamMethod =
+                ProvidedMethod(
+                    "CommitsBehindUpstream",
+                    [],
+                    typeof<int>,
+                    isStatic = true,
+                    invokeCode = fun _ -> <@@ Git.Runtime.commitsBehindUpstream workTree gitDir commonDir @@>
+                )
+
+            commitsBehindUpstreamMethod.AddXmlDoc
+                "<summary>Commits in the configured upstream not yet merged into HEAD. Returns 0 when HEAD is detached, no upstream is set, or git is unavailable.</summary>"
+
+            headBranchProjection.AddMember branchAvailable
+            headBranchProjection.AddMember branchName
+            headBranchProjection.AddMember branchRefName
+            headBranchProjection.AddMember commitsAheadUpstreamMethod
+            headBranchProjection.AddMember commitsBehindUpstreamMethod
+            addRevisionMembers headBranchProjection "HEAD" "HEAD" headDetails
+
+            gitProvider.AddMember headProjection
+            gitProvider.AddMember headBranchProjection
 
             let isDetachedProperty =
                 ProvidedProperty(
@@ -244,7 +387,7 @@ module private Helpers =
 
             isDetachedProperty.AddXmlDoc "<summary>Whether <c>HEAD</c> is detached, read at runtime.</summary>"
 
-            gitProvider.AddMembers [ headProperty; headBranchProperty; isDetachedProperty ]
+            gitProvider.AddMember isDetachedProperty
 
             // Methods rather than properties: each of these starts a `git` process.
             let isDirtyMethod =
@@ -285,6 +428,32 @@ module private Helpers =
 
             gitProvider.AddMembers [ isDirtyMethod; isAvailableMethod; runMethod ]
 
+            let commitsAheadMethod =
+                ProvidedMethod(
+                    "CommitsAhead",
+                    [ ProvidedParameter("baseRef", typeof<string>); ProvidedParameter("headRef", typeof<string>) ],
+                    typeof<int>,
+                    isStatic = true,
+                    invokeCode = fun args -> <@@ Git.Runtime.commitsAhead workTree (%%args.[0]: string) (%%args.[1]: string) @@>
+                )
+
+            commitsAheadMethod.AddXmlDoc
+                "<summary>Commits reachable from <c>headRef</c> but not from <c>baseRef</c>. Shells out to <c>git rev-list --count</c>. Returns 0 on error.</summary>"
+
+            let commitsBehindMethod =
+                ProvidedMethod(
+                    "CommitsBehind",
+                    [ ProvidedParameter("baseRef", typeof<string>); ProvidedParameter("headRef", typeof<string>) ],
+                    typeof<int>,
+                    isStatic = true,
+                    invokeCode = fun args -> <@@ Git.Runtime.commitsBehind workTree (%%args.[0]: string) (%%args.[1]: string) @@>
+                )
+
+            commitsBehindMethod.AddXmlDoc
+                "<summary>Commits reachable from <c>baseRef</c> but not from <c>headRef</c>. Shells out to <c>git rev-list --count</c>. Returns 0 on error.</summary>"
+
+            gitProvider.AddMembers [ commitsAheadMethod; commitsBehindMethod ]
+
             let config = lazy Git.repoConfig layout
 
             /// One nested type per ref: names are fixed at compile time, the sha
@@ -316,6 +485,95 @@ module private Helpers =
                             commit.AddXmlDoc
                                 $"<summary>The commit sha this ref points at, resolved at runtime. Empty if the ref has since been deleted.{addendumValue reference.Target}</summary>"
 
+                            let revisionType =
+                                ProvidedTypeDefinition("Revision", Some typeof<obj>, hideObjectMethods = true)
+
+                            revisionType.AddXmlDoc
+                                "<summary>A git revision selected relative to this ref when the expression starts with <c>~</c> or <c>^</c>.</summary>"
+
+                            // Attach the nested type before defining its static
+                            // parameters; the SDK uses the declaring type to
+                            // validate nested static-parameter instantiations.
+                            refType.AddMember revisionType
+
+                            revisionType.DefineStaticParameters(
+                                [ ProvidedStaticParameter("expression", typeof<string>) ],
+                                fun generatedName parameters ->
+                                    let expression = parameters.[0] :?> string
+                                    let resolvedExpression = Git.Runtime.revisionExpression fullName expression
+                                    let designTimeDetails =
+                                        Git.Runtime.revisionDetails workTree fullName expression
+
+                                    let designTimeSha = designTimeDetails.Sha
+
+                                    let revision =
+                                        ProvidedTypeDefinition(generatedName, Some typeof<obj>, hideObjectMethods = true)
+
+                                    revision.AddXmlDoc
+                                        $"<summary>Git revision <c>{resolvedExpression}</c>.{addendumValue designTimeSha}</summary>"
+
+                                    let sha =
+                                        ProvidedProperty(
+                                            "Sha",
+                                            typeof<string>,
+                                            isStatic = true,
+                                            getterCode = fun _ ->
+                                                <@@ Git.Runtime.resolveRevision workTree fullName expression @@>
+                                        )
+
+                                    sha.AddXmlDoc
+                                        $"<summary>The full commit SHA, resolved at runtime.{addendumValue designTimeSha}</summary>"
+
+                                    let shortSha =
+                                        ProvidedProperty(
+                                            "ShortSha",
+                                            typeof<string>,
+                                            isStatic = true,
+                                            getterCode = fun _ ->
+                                                <@@ Git.Runtime.shortRevision workTree fullName expression @@>
+                                        )
+
+                                    shortSha.AddXmlDoc
+                                        $"<summary>The abbreviated commit SHA, resolved at runtime.{addendumValue designTimeDetails.ShortSha}</summary>"
+
+                                    let addRuntimeRevisionProperty name value hint description =
+                                        let property =
+                                            ProvidedProperty(
+                                                name,
+                                                typeof<string>,
+                                                isStatic = true,
+                                                getterCode = fun _ -> value
+                                            )
+
+                                        property.AddXmlDoc $"<summary>{description}, resolved at runtime.{addendumValue hint}</summary>"
+                                        property
+
+                                    let date =
+                                        addRuntimeRevisionProperty
+                                            "Date"
+                                            <@@ (Git.Runtime.revisionDetails workTree fullName expression).Date @@>
+                                            designTimeDetails.Date
+                                            "The author date of the commit"
+
+                                    let author =
+                                        addRuntimeRevisionProperty
+                                            "Author"
+                                            <@@ (Git.Runtime.revisionDetails workTree fullName expression).Author @@>
+                                            designTimeDetails.Author
+                                            "The commit author"
+
+                                    let message =
+                                        addRuntimeRevisionProperty
+                                            "Message"
+                                            <@@ (Git.Runtime.revisionDetails workTree fullName expression).Message @@>
+                                            designTimeDetails.Message
+                                            "The commit subject"
+
+                                    revision.AddMembers [ sha; shortSha; date; author; message ]
+                                    revisionType.AddMember revision
+                                    revision
+                            )
+
                             refType.AddMembers [
                                 constString "Name" reference.Name $"<summary>The short ref name.{addendumValue reference.Name}</summary>"
                                 constString "RefName" fullName $"<summary>The fully qualified ref name.{addendumValue fullName}</summary>"
@@ -328,6 +586,34 @@ module private Helpers =
                                         "<summary>The configured upstream in <c>remote/branch</c> shorthand. Empty when none is configured.</summary>"
                                 )
 
+                            let refCommitsAheadMethod =
+                                ProvidedMethod(
+                                    "CommitsAhead",
+                                    [ ProvidedParameter("otherRef", typeof<string>) ],
+                                    typeof<int>,
+                                    isStatic = true,
+                                    invokeCode = fun args ->
+                                        <@@ Git.Runtime.commitsAhead workTree (%%args.[0]: string) fullName @@>
+                                )
+
+                            refCommitsAheadMethod.AddXmlDoc
+                                $"<summary>Commits in <c>{fullName}</c> not reachable from <c>otherRef</c>. Shells out to <c>git rev-list --count</c>.</summary>"
+
+                            let refCommitsBehindMethod =
+                                ProvidedMethod(
+                                    "CommitsBehind",
+                                    [ ProvidedParameter("otherRef", typeof<string>) ],
+                                    typeof<int>,
+                                    isStatic = true,
+                                    invokeCode = fun args ->
+                                        <@@ Git.Runtime.commitsBehind workTree (%%args.[0]: string) fullName @@>
+                                )
+
+                            refCommitsBehindMethod.AddXmlDoc
+                                $"<summary>Commits in <c>otherRef</c> not reachable from <c>{fullName}</c>. Shells out to <c>git rev-list --count</c>.</summary>"
+
+                            refType.AddMembers [ refCommitsAheadMethod; refCommitsBehindMethod ]
+
                             refType)
 
                     group
@@ -337,6 +623,167 @@ module private Helpers =
             makeRefGroup "RemoteBranches" "refs/remotes" "<summary>Remote-tracking branches.</summary>" false
 
             makeRefGroup "Tags" "refs/tags" "<summary>Tags. For an annotated tag <c>Commit</c> is the tag object, not the commit it peels to.</summary>" false
+
+            gitProvider.AddMemberDelayed <| fun () ->
+                let designTimeLatestTag = Git.Runtime.latestTag workTree
+
+                let designTimeLatestTagDetails = Git.Runtime.revisionDetails workTree designTimeLatestTag ""
+
+                let latestTagProjection =
+                    ProvidedTypeDefinition("LatestTag", Some typeof<obj>, hideObjectMethods = true)
+
+                latestTagProjection.AddXmlDoc
+                    $"<summary>The nearest ancestor tag reachable from HEAD (<c>git describe --tags --abbrev=0</c>), re-evaluated at runtime.{addendumValue designTimeLatestTag}</summary>"
+
+                let latestTagIsAvailableMethod =
+                    ProvidedMethod(
+                        "IsAvailable",
+                        [],
+                        typeof<bool>,
+                        isStatic = true,
+                        invokeCode = fun _ -> <@@ Git.Runtime.latestTag workTree <> "" @@>
+                    )
+
+                latestTagIsAvailableMethod.AddXmlDoc
+                    "<summary>Whether any tag is reachable from HEAD at runtime.</summary>"
+
+                let latestTagNameProperty =
+                    ProvidedProperty(
+                        "Name",
+                        typeof<string>,
+                        isStatic = true,
+                        getterCode = fun _ -> <@@ Git.Runtime.latestTag workTree @@>
+                    )
+
+                latestTagNameProperty.AddXmlDoc
+                    $"<summary>The tag name, resolved at runtime.{addendumValue designTimeLatestTag}</summary>"
+
+                let latestTagSha =
+                    ProvidedProperty(
+                        "Sha",
+                        typeof<string>,
+                        isStatic = true,
+                        getterCode = fun _ -> <@@ (Git.Runtime.latestTagDetails workTree).Sha @@>
+                    )
+
+                latestTagSha.AddXmlDoc
+                    $"<summary>The full commit SHA, resolved at runtime.{addendumValue designTimeLatestTagDetails.Sha}</summary>"
+
+                let latestTagShortSha =
+                    ProvidedProperty(
+                        "ShortSha",
+                        typeof<string>,
+                        isStatic = true,
+                        getterCode = fun _ -> <@@ (Git.Runtime.latestTagDetails workTree).ShortSha @@>
+                    )
+
+                latestTagShortSha.AddXmlDoc
+                    $"<summary>The abbreviated commit SHA, resolved at runtime.{addendumValue designTimeLatestTagDetails.ShortSha}</summary>"
+
+                let latestTagDate =
+                    ProvidedProperty(
+                        "Date",
+                        typeof<string>,
+                        isStatic = true,
+                        getterCode = fun _ -> <@@ (Git.Runtime.latestTagDetails workTree).Date @@>
+                    )
+
+                latestTagDate.AddXmlDoc
+                    $"<summary>The author date of the tagged commit, resolved at runtime.{addendumValue designTimeLatestTagDetails.Date}</summary>"
+
+                let latestTagAuthor =
+                    ProvidedProperty(
+                        "Author",
+                        typeof<string>,
+                        isStatic = true,
+                        getterCode = fun _ -> <@@ (Git.Runtime.latestTagDetails workTree).Author @@>
+                    )
+
+                latestTagAuthor.AddXmlDoc
+                    $"<summary>The commit author, resolved at runtime.{addendumValue designTimeLatestTagDetails.Author}</summary>"
+
+                let latestTagMessage =
+                    ProvidedProperty(
+                        "Message",
+                        typeof<string>,
+                        isStatic = true,
+                        getterCode = fun _ -> <@@ (Git.Runtime.latestTagDetails workTree).Message @@>
+                    )
+
+                latestTagMessage.AddXmlDoc
+                    $"<summary>The commit subject, resolved at runtime.{addendumValue designTimeLatestTagDetails.Message}</summary>"
+
+                latestTagProjection.AddMember latestTagIsAvailableMethod
+                latestTagProjection.AddMember latestTagNameProperty
+                latestTagProjection.AddMember latestTagSha
+                latestTagProjection.AddMember latestTagShortSha
+                latestTagProjection.AddMember latestTagDate
+                latestTagProjection.AddMember latestTagAuthor
+                latestTagProjection.AddMember latestTagMessage
+
+                let latestTagRevisionType =
+                    ProvidedTypeDefinition("Revision", Some typeof<obj>, hideObjectMethods = true)
+
+                latestTagRevisionType.AddXmlDoc
+                    "<summary>A git revision relative to the nearest ancestor tag. Use <c>~N</c> to step back N commits from the tag, or any git revision expression.</summary>"
+
+                latestTagProjection.AddMember latestTagRevisionType
+
+                latestTagRevisionType.DefineStaticParameters(
+                    [ ProvidedStaticParameter("expression", typeof<string>) ],
+                    fun generatedName parameters ->
+                        let expression = parameters.[0] :?> string
+                        let designTimeRevision = Git.Runtime.latestTagRevisionDetails workTree expression
+                        let designTimeSha = designTimeRevision.Sha
+
+                        let revision =
+                            ProvidedTypeDefinition(generatedName, Some typeof<obj>, hideObjectMethods = true)
+
+                        revision.AddXmlDoc
+                            $"<summary>Revision <c>{expression}</c> relative to the nearest ancestor tag.{addendumValue designTimeSha}</summary>"
+
+                        let addLatestTagRevisionProperty name value hint description =
+                            let property =
+                                ProvidedProperty(name, typeof<string>, isStatic = true, getterCode = fun _ -> value)
+
+                            property.AddXmlDoc
+                                $"<summary>{description}, resolved at runtime.{addendumValue hint}</summary>"
+
+                            property
+
+                        revision.AddMembers [
+                            addLatestTagRevisionProperty
+                                "Sha"
+                                <@@ (Git.Runtime.latestTagRevisionDetails workTree expression).Sha @@>
+                                designTimeSha
+                                "The full commit SHA"
+                            addLatestTagRevisionProperty
+                                "ShortSha"
+                                <@@ (Git.Runtime.latestTagRevisionDetails workTree expression).ShortSha @@>
+                                designTimeRevision.ShortSha
+                                "The abbreviated commit SHA"
+                            addLatestTagRevisionProperty
+                                "Date"
+                                <@@ (Git.Runtime.latestTagRevisionDetails workTree expression).Date @@>
+                                designTimeRevision.Date
+                                "The author date of the commit"
+                            addLatestTagRevisionProperty
+                                "Author"
+                                <@@ (Git.Runtime.latestTagRevisionDetails workTree expression).Author @@>
+                                designTimeRevision.Author
+                                "The commit author"
+                            addLatestTagRevisionProperty
+                                "Message"
+                                <@@ (Git.Runtime.latestTagRevisionDetails workTree expression).Message @@>
+                                designTimeRevision.Message
+                                "The commit subject"
+                        ]
+
+                        latestTagRevisionType.AddMember revision
+                        revision
+                )
+
+                latestTagProjection
 
             gitProvider.AddMemberDelayed <| fun () ->
                 let group = ProvidedTypeDefinition("Remotes", Some typeof<obj>, hideObjectMethods = true)

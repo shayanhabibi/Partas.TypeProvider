@@ -1,144 +1,145 @@
-# Partas.TypeProvider
+# Partas.TypeProvider.BuildHelper
 
-> Composite provider which includes edits of [`EasyBuild.FileSystemProvider`'s](https://github.com/easybuild-org/EasyBuild.FileSystemProvider)
-> `AbsoluteFileSystem` and `VirtualFileSystem` providers.
->
-> All credit to the original authors and contributors.
+An F# erasing type provider for build scripts and tooling. At compile time it walks your filesystem, reads `.git` directly, and parses your solution file. The resulting types give you IDE completion over real repo structure, and every runtime-evaluated member (SHAs, MSBuild properties) surfaces its **current value as a doc-comment hint while you author** — so hovering over `Git.Head.Sha` shows the actual commit hash, and `Project.MyApp.Version` shows `2.1.0`, without running anything.
 
-## Partas.TypeProvider.BuildHelper
+Suited to FAKE pipelines, Bullseye scripts, custom build CLIs — anywhere you're wiring up CI/CD in F# and want to catch path and name errors at compile time.
 
-A composite type provider for common script tasks that combines
-`EasyBuild.FileSystemProvider`'s with a `GitProvider` and `ProjectProvider`.
+```
+dotnet add package Partas.TypeProvider.BuildHelper
+```
+
+---
+
+## Setup
 
 ```fsharp
 open Partas.TypeProvider.BuildHelper
 
-type Build = BuildHelperProvider<"..", capabilityFullOverride = true>
+// rootPath is relative to the consuming .fsproj, not cwd.
+type Root = BuildHelperProvider<"..", capabilityFullOverride = true>
 
-// Each provider is shelled from a separate property, to keep tooling suggestions
-// as relevant and helpful.
-type FileProvider = Build.FileSystem
-type GitProvider = Build.Git
-type ProjectProvider = Build.Project
-
-// Virtual file system would require a second literal string passed
-// to the `BuildHelperProvider` as the configuration.
-// type VirtualProvider = Build.VirtualSystem
+type FS      = Root.FileSystem
+type Git     = Root.Git
+type Project = Root.Project
 ```
-## Nested TypeProviders
 
-| Provider           | Switch                                       | Default     |
-|--------------------|----------------------------------------------|-------------|
-| FileSystem         | `capabilityFileSystem`                       | true        |
-| VirtualFileSystem  | `capabilityFileSystem` +  `virtualPathConfig` | true + null |
-| Git                | `capabilityGit` | false       |
-| Project            | `capabilityProject` | false       |
-| Override all above | `capabilityFullOverride` | false       |
+| Parameter                | Default | Notes |
+|--------------------------|---------|-------|
+| `rootPath`               | —       | Relative to the consuming `.fsproj`; empty string = project directory |
+| `virtualPathConfig`      | `""`    | Indented DSL for paths that don't exist at design time |
+| `capabilityFileSystem`   | `true`  | |
+| `capabilityGit`          | `false` | |
+| `capabilityProject`      | `false` | Requires the .NET SDK at runtime |
+| `capabilityFullOverride` | `false` | Enables all three above |
 
-### FileSystemProvider
+---
 
-|Switch| Default       |
-|---|---------------|
-|`capabilityFileSystem`| true          |
-| `virtualPathConfig` | `null : string` |
+## FileSystem
 
+Walks the directory tree at compile time. Directories become nested types; files become static `FileInfo` properties. Each directory also exposes `.` (`DirectoryInfo`), `GetInfo()`, and `ToString()`.
 
-### GitProvider
+```fsharp
+let file : FileInfo = FS.src.``MyProject``.``Program.fs``
+let dir  : string   = FS.src.ToString()
+```
 
-| Switch              | Default         |
-|---------------------|-----------------|
-| `capabilityGit`     | false           |
+**VirtualFileSystem** generates the same shape from an indented-text DSL — for output paths that don't exist until after the build:
 
-The git provider provides nested types when there is some guarantee to their existence,
-such as branch names (divided between local and remote), remotes, and tags.
+```fsharp
+type Root = BuildHelperProvider<"..", virtualPathConfig = """
+artifacts/
+  nupkg/
+  bin/
+""">
+// Root.VirtualFileSystem.artifacts.nupkg — no disk presence required at compile time
+```
 
-Other information can be queried through the type provider, and it will provide the value
-at runtime by shelling `git` commands.
+---
 
-### ProjectProvider
+## Git
 
-| Switch              | Default         |
-|---------------------|-----------------|
-| `capabilityProject` | false           |
+Reads `.git` directly at design time — no `git` binary needed during compilation. Branch names, remote names, submodule paths, and the working-tree root are **baked as constants** into the consuming assembly. Volatile values execute `git` at runtime and are cached.
 
-The project provider provides nested types to detected project files, with helpers to
-scaffold cli commands for common operations routed with those specific projects
-as the targets.
+**Every runtime member shows its current value as a tooltip hint while you write.** Hover over `Git.HeadBranch.Name` mid-sentence and your IDE shows `main`; hover over `Git.Head.Sha` and it shows the actual hash. This is the repo's live state surfaced without leaving the editor.
 
-Also provides utility extraction of properties, such as `Version`, and provides
-the current value within the member documentation as a design time helper.
+```fsharp
+// Constants — zero runtime cost, baked at compile time:
+let remote = Git.Remotes.origin.FetchUrl   // e.g. "https://github.com/org/repo.git"
+let branch = Git.Branches.main.Name       // "main"
+let ref    = Git.Branches.main.RefName    // "refs/heads/main"
+let up     = Git.Branches.main.Upstream   // "origin/main"
 
-## Type Parameters
+// Runtime (shells git, with design-time hint in tooltip):
+let sha   = Git.Branches.main.Commit      // tooltip: DesignTime Hint: 'a3f1c9...'
+let head  = Git.Head.Sha
+let dirty = Git.IsDirty()
 
-See the xml documentation on the type provider.
+if Git.HeadBranch.IsAvailable() then
+    printfn "on %s" Git.HeadBranch.Name
+
+// Revision<"expr"> — static parameter, each expression is its own type:
+type Prev = Root.Git.Branches.main.Revision<"HEAD~1">
+let prevSha = Prev.Sha   // tooltip shows the actual SHA at author time
+```
+
+`Git.Run(args)` executes an arbitrary read-only `git` command — never prompts, never touches the network, 2-second timeout, returns stdout or `""`.
+
+---
+
+## Project
+
+Discovers projects from the solution file (`.slnx` preferred over `.sln`, directory-walk if absent). Path members are baked as constants; MSBuild properties are evaluated at runtime via `dotnet msbuild -getProperty` and cached per project per process.
+
+**Hovering over `Version` while wiring a publish step shows the actual current version** — you see `2.1.0` in the tooltip before the first `dotnet pack` has run.
+
+```fsharp
+// Constants:
+let path = Project.``MyProject``.Path
+let rel  = Project.``MyProject``.RelativePath
+
+// Runtime — first call ~30s cold (SDK load); cached after:
+let ver  = Project.``MyProject``.Version          // tooltip: DesignTime Hint: '2.1.0'
+let tfm  = Project.``MyProject``.TargetFramework
+
+// Arbitrary property:
+let aot  = Project.``MyProject``.Property("PublishAot")
+
+// Scaffolded command lines — returns args only, nothing executes:
+let args = Project.``MyProject``.Pack(["--no-build"])
+// → ["pack"; "/path/to/MyProject.fsproj"; "--no-build"]
+
+// Clear the per-process cache if a build changes the project mid-run:
+Project.``MyProject``.Invalidate()
+```
+
+Built-in property members: `Version`, `TargetFramework`, `TargetFrameworks`, `AssemblyName`, `RootNamespace`, `OutputType`, `PackageId`, `IsPackable`.
+
+---
+
+## Cautions
+
+**Everything is a compile-time snapshot.** New branches, files, and projects don't appear until you rebuild the consuming project.
+
+**Property hints skip condition evaluation.** Hints are extracted from raw project XML. A property inside `<Condition="'$(Configuration)'=='Release'">` may show the wrong value. The runtime result from `dotnet msbuild` is always authoritative.
+
+**`Version` hint `1.0.0` is ambiguous.** That is also the MSBuild default, so it may mean the property is undeclared rather than set explicitly. The tooltip calls this out.
+
+**`capabilityProject` requires the SDK at runtime.** Without it, every property returns `""`. Check `Project.IsDotnetAvailable()` when deployment context is uncertain.
+
+**Annotated tag `.Commit` is the tag object, not the commit.** Use `Git.Run("rev-parse v1.0.0^{}")` to peel it.
+
+**Detached or unborn HEAD.** `HeadBranch.*` and `Head.*` expose `IsAvailable()` — check it before reading commit data.
+
+**Ref names with backticks are silently dropped.** They cannot be expressed as F# identifiers and are excluded at design time with no diagnostic.
 
 ---
 
 ## Build CLI
 
-Every repository task runs through the `Build` project rather than a script, so
-the tasks are typed, debuggable, and discoverable:
-
-```shell
-dotnet run --project Build.fsproj -- --help
+```bash
+dotnet run --project Build.fsproj -- build
+dotnet run --project Build.fsproj -- test
+dotnet run --project Build.fsproj -- pack
+dotnet run --project Build.fsproj -- publish --nuget-key KEY
+dotnet run --project Build.fsproj -- publish local
 ```
-
-| Command | What it does |
-|---------|--------------|
-| `build` | Restores and builds the solution |
-| `test` | Builds and runs the Expecto suite |
-| `format` | Formats every source file with Fantomas (`--dry-format` checks instead) |
-| `lint` | Fails if any file needs formatting |
-| `publish` | Packs and pushes to NuGet (`--nuget-key`; falls back to the `local` feed) |
-| `docs` | Builds the fsdocs site (`--watch` to serve it) |
-
-Global flags: `--quick` skips restores and checks,
-`--format` formats before building, `--dry-format` checks formatting before building,
-`--skip-tests` skips the suite.
-
-## Layout
-
-```
-Build.fsproj              the build CLI
-Build/
-  Spec.fs                 typed repository paths, CLI options, process wrappers
-  Program.fs              the stages and the commands
-src/Partas.TypeProvider/      the library
-tests/Partas.TypeProvider.Tests/  the Expecto suite
-```
-
-### Adding a project
-
-`Spec.fs` addresses the repository through `EasyBuild.FileSystemProvider`, so
-paths are checked when the build project compiles. After adding a project,
-register it in `Spec.fs`:
-
-```fsharp
-module Projects =
-    module Directory =
-        type Solution = Root.src.``Partas.TypeProvider``
-        type NewThing = Root.src.``Partas.NewThing``
-```
-
-A typo, or a project renamed without updating the build, then fails at compile
-time rather than halfway through a release.
-
-### Adding a step
-
-A step is a stage of a pipeline. A stage that needs a flag binds it in an
-`inputs { }` block, which is also what puts the flag into `--help`:
-
-```fsharp
-let myStep = inputs {
-    let! quick = Options.quick
-
-    return stage "my step" {
-        when' (not quick)
-        run (fun (_: StageContext) -> dotnet [ "..." ] root)
-    }
-}
-```
-
-Add it to any command's `pipeline { }`. Because the condition lives in the
-stage, the command carries no flags of its own — and adding the stage to a
-second command registers `--quick` there too.
