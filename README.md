@@ -143,3 +143,9 @@ dotnet run --project Build.fsproj -- pack
 dotnet run --project Build.fsproj -- publish --nuget-key KEY
 dotnet run --project Build.fsproj -- publish local
 ```
+
+---
+
+## Acknowledgements
+
+The `FileSystem` and `VirtualFileSystem` providers are based on [EasyBuild.FileSystemProvider](https://github.com/easybuild-org/EasyBuild.FileSystemProvider).
