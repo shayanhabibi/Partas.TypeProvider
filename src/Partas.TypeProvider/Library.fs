@@ -314,7 +314,7 @@ module private Helpers =
                                 )
 
                             commit.AddXmlDoc
-                                $"<summary>The commit sha this ref points at, resolved at runtime. Empty if the ref has since been deleted.</summary>"
+                                $"<summary>The commit sha this ref points at, resolved at runtime. Empty if the ref has since been deleted.{addendumValue reference.Target}</summary>"
 
                             refType.AddMembers [
                                 constString "Name" reference.Name $"<summary>The short ref name.{addendumValue reference.Name}</summary>"
@@ -682,4 +682,3 @@ A switch to override all capability switches to <c>true</c>. Defaults to <c>fals
             )
 
     do this.AddNamespace(namespaceName, [ thisType ])
-
