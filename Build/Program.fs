@@ -13,6 +13,7 @@
 /// </summary>
 module Build
 
+open Fake.Core.Context
 open Fake.DotNet
 open Spec
 open Fake.Core
@@ -23,6 +24,9 @@ open Partas.Build.Internal
 
 // disable warning of implicit conversion of ops to string
 #nowarn 3391
+
+let execContext = FakeExecutionContext.Create false "build.fsx" []
+setExecutionContext (RuntimeContext.Fake execContext)
 
 let private root = Root.``.``
 
