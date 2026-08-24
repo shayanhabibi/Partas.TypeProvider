@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFrameworks>net8.0;netstandard2.0</TargetFrameworks>
+        <FSharpToolsDirectory>typeproviders</FSharpToolsDirectory>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <OutputType>Library</OutputType>
+        <RootNamespace>Partas.TypeProvider.BuildHelper</RootNamespace>
+        <AssemblyName>Partas.TypeProvider.BuildHelper</AssemblyName>
+        <PackageId>Partas.TypeProvider.BuildHelper</PackageId>
+        <Title>Partas.TypeProvider.BuildHelper</Title>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="../../README.md" Pack="true" PackagePath="\" />
+        <Compile Include="Proc.fs" />
+        <Compile Include="Git.fs" />
+        <Compile Include="Project.fs" />
+    </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="../Partas.TypeProvider/Partas.TypeProvider.fsproj">
+            <PrivateAssets>all</PrivateAssets>
+            <IsFSharpDesignTimeProvider>true</IsFSharpDesignTimeProvider>
+        </ProjectReference>
+    </ItemGroup>
+
+</Project>

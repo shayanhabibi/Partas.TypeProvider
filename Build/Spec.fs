@@ -37,19 +37,22 @@ module DirectoryManagement =
 
     module Projects =
         module Directory =
-            type Solution = Root.src.``Partas.TypeProvider``
+            type DesignTime = Root.src.``Partas.TypeProvider``
+            type Runtime = Root.src.``Partas.TypeProvider.Runtime``
 
         module FsProj =
             [<Literal>]
-            let Solution = Directory.Solution.``Partas.TypeProvider.fsproj``
+            let DesignTime = Directory.DesignTime.``Partas.TypeProvider.fsproj``
+            [<Literal>]
+            let Runtime = Directory.Runtime.``Partas.TypeProvider.Runtime.fsproj``
 
     module Tests =
         module Directory =
-            type Solution = Root.tests.``Partas.TypeProvider.Tests``
+            type BuildHelper = Root.tests.``Partas.TypeProvider.Tests``
 
         module FsProj =
             [<Literal>]
-            let Solution = Directory.Solution.``Partas.TypeProvider.Tests.fsproj``
+            let BuildHelper = Directory.BuildHelper.``Partas.TypeProvider.Tests.fsproj``
 
     module Solutions =
         [<Literal>]

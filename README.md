@@ -25,8 +25,29 @@ type ProjectProvider = Build.Project
 // to the `BuildHelperProvider` as the configuration.
 // type VirtualProvider = Build.VirtualSystem
 ```
+## Nested TypeProviders
+
+| Provider           | Switch                                       | Default     |
+|--------------------|----------------------------------------------|-------------|
+| FileSystem         | `capabilityFileSystem`                       | true        |
+| VirtualFileSystem  | `capabilityFileSystem` +  `virtualPathConfig` | true + null |
+| Git                | `capabilityGit` | false       |
+| Project            | `capabilityProject` | false       |
+| Override all above | `capabilityFullOverride` | false       |
+
+### FileSystemProvider
+
+|Switch| Default       |
+|---|---------------|
+|`capabilityFileSystem`| true          |
+| `virtualPathConfig` | `null : string` |
+
 
 ### GitProvider
+
+| Switch              | Default         |
+|---------------------|-----------------|
+| `capabilityGit`     | false           |
 
 The git provider provides nested types when there is some guarantee to their existence,
 such as branch names (divided between local and remote), remotes, and tags.
@@ -35,6 +56,10 @@ Other information can be queried through the type provider, and it will provide 
 at runtime by shelling `git` commands.
 
 ### ProjectProvider
+
+| Switch              | Default         |
+|---------------------|-----------------|
+| `capabilityProject` | false           |
 
 The project provider provides nested types to detected project files, with helpers to
 scaffold cli commands for common operations routed with those specific projects

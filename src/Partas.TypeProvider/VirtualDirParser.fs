@@ -1,4 +1,4 @@
-﻿module Partas.TypeProvider.VirtualDirectory
+﻿module Partas.TypeProvider.BuildHelper.DesignTime.VirtualDirectory
 
 open System
 open System.IO

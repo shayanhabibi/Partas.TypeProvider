@@ -38,12 +38,107 @@ let private getConfig: string -> DotNet.BuildConfiguration =
     | "Debug" -> DotNet.BuildConfiguration.Debug
     | _ -> DotNet.BuildConfiguration.Release
 
+module Stages =
+    let restoreTools quick = stage "restore tools" {
+        when' (not quick)
+        run (fun _ -> dotnet [ "tool"; "restore"; "--verbosity"; "q" ] root)
+    }
+    let restoreSolution quick = stage "restore solution" {
+        when' (not quick)
+        run (fun (_: StageContext) ->
+            DotNet.restore (fun p -> { p with DotNet.RestoreOptions.MSBuildParams.DisableInternalBinLog = true }) Solutions.Main)
+    }
+
+    let format (dry: bool) = stage "format" {
+        let sourceFiles = sourceFiles |> Seq.map (sprintf "\"%s\"") |> String.concat " "
+        stage "check" {
+            when' dry
+            run (cmd $"fantomas {sourceFiles} --check")
+        }
+        stage "execute" {
+            when' (not dry)
+            run (cmd $"fantomas {sourceFiles}")
+        }
+    }
+    let flaggedFormat = input {
+        let! shouldFormat = Options.format
+        return stage "format" {
+            when' shouldFormat
+            format false
+        }}
+
+    let private commonMsBuildParams  = fun msBuildParams -> {
+        msBuildParams with
+            MSBuild.CliArguments.DisableInternalBinLog = true
+            MSBuild.CliArguments.Properties = [
+                "PackageVersion", release.Value.AssemblyVersion
+                "Version", release.Value.AssemblyVersion
+            ]
+    }
+    let build project config = stage $"build-{project}" {
+        run (fun _ ->
+            project |> DotNet.build (fun p ->
+                { p with
+                    Configuration = config
+                    MSBuildParams = commonMsBuildParams p.MSBuildParams })
+            )
+    }
+
+    let pack project output = stage $"pack-{project}" {
+        run (fun _ ->
+            project |> DotNet.pack (fun p ->
+                {
+                    p with
+                        NoRestore = true
+                        OutputPath = Some output
+                        MSBuildParams = commonMsBuildParams p.MSBuildParams
+                }
+                )
+            )
+    }
+
+    let push source nupkg apiKey = stage $"publish-{nupkg}" {
+        echo $"Publishing {nupkg} to {source}."
+        run (fun _ ->
+            nupkg
+            |> DotNet.nugetPush  (fun p ->
+                {
+                    p with
+                        PushParams.ApiKey = apiKey
+                        PushParams.Source = Some source
+                        Common.CustomParams = Some "--skip-duplicate"
+                }
+                )
+            )
+    }
+
+    let publishLocal nupkg = push "local" nupkg None
+    let publishNuget nupkg apiKey = push "https://api.nuget.org/v3/index.json" nupkg (Some apiKey)
+
+    let expecto path = stage "expecto" {
+        run (fun _ ->
+            path |> Testing.Expecto.run (fun p ->
+                { p with CustomArgs = "--colours 256" :: p.CustomArgs }
+                )
+            )
+    }
+
+    let buildDocs watchMode = stage "docs" {
+        run (fun ctx ->
+            let wdir = StageContext.getWorkingDir ctx |> ValueOption.defaultValue root
+            if watchMode
+            then dotnet [ "fsdocs"; "watch"; "--eval" ] wdir
+            else dotnet [ "fsdocs"; "build"; "--eval"; "--clean" ] wdir
+            )
+    }
+
+
+
 /// <summary>Stages every command opens with. All are skipped by <c>--quick</c>.</summary>
 module Prelude =
     let restoreTools =
         input {
             let! quick = Options.quick
-
             return stage "restore tools" {
                 when' (not quick)
                 run (fun _ -> dotnet [ "tool"; "restore"; "--verbosity"; "q" ] root)
@@ -53,320 +148,138 @@ module Prelude =
     let restoreSolution =
         input {
             let! quick = Options.quick
-
-            return stage "restore" {
-                when' (not quick)
-                run (fun (_: StageContext) ->
-                    DotNet.restore
-                        (fun p -> { p with DotNet.RestoreOptions.MSBuildParams.DisableInternalBinLog = true }) Solutions.Main)
-            }
+            return Stages.restoreSolution quick
         }
 
-module HouseKeeping =
-    let clean =
+module Pipelines =
+    let setup = pipeline "setup" {
         input {
             let! quick = Options.quick
-
-            return stage "clean" {
+            return stage "setup" {
+                parallel'
                 when' (not quick)
-
-                run (fun (_: StageContext) ->
+                Stages.restoreSolution true
+                Stages.restoreTools true
+                run (fun _ ->
                     !! "**/**/bin"
                     ++ "temp"
                     -- "bin"
-                    |> Shell.cleanDirs)
-            }
-        }
-
-    let private formatImpl () =
-        sourceFiles
-        |> Seq.map (sprintf "\"%s\"")
-        |> String.concat " "
-        |> DotNet.exec id "fantomas"
-        |> function
-        | result when result.OK -> ()
-        | result -> Trace.log $"Errors while formatting all files: %A{result.Messages}"
-
-    let private formatCheckImpl () =
-        sourceFiles
-        |> Seq.map (sprintf "\"%s\"")
-        |> String.concat " "
-        |> sprintf "%s --check"
-        |> DotNet.exec id "fantomas"
-        |> function
-        | result when result.OK -> ()
-        | result when result.ExitCode = 99 -> failwith "Some files need formatting"
-        | result -> failwith $"Errors while checking formatting of all files: %A{result.Messages}"
-
-    /// The `format` command: formats, or checks only under --dry-format.
-    let formatCommand =
-        input {
-            let! dryFormat = Options.dryFormat
-            return stage "format" { run (fun _ -> if dryFormat then formatCheckImpl () else formatImpl ()) }
-        }
-
-    /// Opt-in formatting inside another command, via --format.
-    let format =
-        input {
-            let! format = Options.format
-
-            return stage "format" {
-                when' format
-                run (fun _ -> formatImpl ())
-            }
-        }
-
-    /// The `lint` command: always checks.
-    let dryFormatCommand =
-        stage "lint" { run (fun _ -> formatCheckImpl ()) }
-
-    /// Opt-in format checking inside another command, via --dry-format.
-    /// Suppressed when --format was passed, which has already fixed the files.
-    let dryFormat =
-        input {
-            let! format = Options.format
-            and! dryFormat = Options.dryFormat
-
-            return stage "lint" {
-                when' (
-                    dryFormat
-                 && not format
+                    |> Shell.cleanDirs
                     )
-
-                run (fun _ -> formatCheckImpl ())
             }
         }
+    }
 
-module ProjectManagement =
-    let build =
-        input {
-            let! config = Options.config
-
-            return stage "build" {
-                run (fun _ ->
-                    let config = getConfig config
-
-                    [ Projects.FsProj.Solution ]
-                    |> List.iter (
-                           DotNet.build (fun p ->
-                               { p with
-                                     Configuration = config
-                                     DotNet.BuildOptions.MSBuildParams.Properties =
-                                         [ "PackageVersion", release.Value.AssemblyVersion
-                                           "Version", release.Value.AssemblyVersion ]
-                                     // Keep an unconditional field last: the template engine deletes
-                                     // the marker lines above, and a conditional block at the edge of
-                                     // a bracket changes what Fantomas formats the result to.
-                                     DotNet.BuildOptions.MSBuildParams.DisableInternalBinLog = true })
-                           ))
-            }
-        }
-
-    let pack =
-        stage "pack" {
-            run (fun _ ->
-                [ Projects.FsProj.Solution ]
-                |> List.iter (
-                       DotNet.pack (fun p ->
-                           { p with
-                                 NoRestore = true
-                                 OutputPath = Some "bin"
-                                 DotNet.PackOptions.MSBuildParams.DisableInternalBinLog = true
-                                 DotNet.PackOptions.MSBuildParams.Properties =
-                                     [ "PackageVersion", release.Value.AssemblyVersion
-                                       "Version", release.Value.AssemblyVersion ] })
-                       ))
-        }
-
-    let publish =
-        input {
-            let! apiKey = Options.NuGet.key
-
-            let inline publishToSourceWithKey apiKey source =
-                !! "bin/*.nupkg"
-                |> Seq.iter (
-                       DotNet.nugetPush (fun p ->
-                           { p with
-                                 DotNet.NuGetPushOptions.PushParams.ApiKey = apiKey
-                                 DotNet.NuGetPushOptions.PushParams.Source = Some source
-                                 DotNet.NuGetPushOptions.Common.CustomParams = Some "--skip-duplicate" })
-                       )
-
-            return stage "publish" {
-                echo (
-                    match apiKey with
-                    | Some _ -> "Publishing to nuget.org."
-                    | None -> "No NuGet API key provided. Publishing to local feed if it exists."
-                    )
-
-                run (fun (_: StageContext) ->
-                    match apiKey with
-                    | None ->
-                        "local"
-                        |> publishToSourceWithKey None
-                    | Some _ ->
-                        "https://api.nuget.org/v3/index.json"
-                        |> publishToSourceWithKey apiKey)
-            }
-        }
-
-module Tests =
-    let build =
+    let executeTests = pipeline "test" {
         input {
             let! skipTests = Options.skipTests
             and! config = Options.config
 
-            return
-                stage "build tests" {
-                    when' (not skipTests)
+            let config = getConfig config
 
-                    run (fun _ ->
-                        let config = getConfig config
-
-                        [ Tests.FsProj.Solution ]
-                        |> List.iter (
-                               DotNet.build (fun p ->
-                                   { p with Configuration = config ; DotNet.BuildOptions.MSBuildParams.DisableInternalBinLog = true })
-                               ))
-                }
-        }
-
-    let execute =
-        input {
-            let! skipTests = Options.skipTests
-
-            return stage "test" {
-                when' (not skipTests)
-
-                run (fun _ ->
-                    !! "**/bin/**/*.Tests.dll"
-                    |> Testing.Expecto.run (fun p ->
-                        { p with
-                              Summary = true
-                              CustomArgs = "--colours 256" :: p.CustomArgs }))
+            return stage "" {
+                let tests = [ Tests.FsProj.BuildHelper ]
+                for test in tests do
+                    Stages.build test config
+                let glob = !! "**/bin/**/*.Tests.dll"
+                Stages.expecto glob
             }
         }
+    }
 
-module Documentation =
-    /// Serves under --watch, builds otherwise.
-    let generate =
-        input {
-            let! watch = Options.watch
-
-            return stage "docs" {
-                run (fun _ ->
-                    if watch then
-                        dotnet [ "fsdocs"; "watch"; "--eval" ] root
-                    else
-                        dotnet [ "fsdocs"; "build"; "--eval"; "--clean" ] root)
+    let build = input {
+        let! config = Options.config
+        let config = getConfig config
+        return pipeline "build" {
+            let projects = [ Projects.FsProj.Runtime ]
+            stage "parallelise" {
+                parallel'
+                for project in projects do Stages.build project config
             }
         }
+    }
+
+    let pack = pipeline "pack" {
+        let project = Projects.FsProj.Runtime
+        let config = DotNet.BuildConfiguration.Release
+        Stages.build project config
+        Stages.pack project "bin"
+    }
+
+    let push = input {
+        let! apiKey = Options.NuGet.key
+        return pipeline "publish" {
+            stage "push-local" {
+                when' apiKey.IsNone
+                for nupkg in !! "bin/*.nupkg" do
+                    Stages.publishLocal nupkg
+            }
+            stage "push-nuget" {
+                when' apiKey.IsSome
+                for nupkg in !! "bin/*.nupkg" do
+                    Stages.publishNuget nupkg apiKey.Value
+            }
+
+        }
+    }
 
 module Commands =
-    let format =
-        command "format" {
-            description "Formats all source files"
-
-            Command.pipeline {
-                workingDir root
-                Prelude.restoreTools
-                HouseKeeping.formatCommand
+    let format = command "format" {
+        description "Formats all source files"
+        Pipelines.setup
+        Command.pipeline {
+            input {
+                let! dryFormat = Options.dryFormat
+                return Stages.format dryFormat
             }
         }
+    }
 
-    let lint =
-        command "lint" {
-            description "Checks formatting of all source files"
-            Command.pipeline {
-                workingDir root
-                Prelude.restoreTools
-                HouseKeeping.dryFormatCommand
-            }
-        }
+    let build = command "build" {
+        description "Builds the solution"
+        Pipelines.setup
+        Command.pipeline { Stages.flaggedFormat }
+        Pipelines.build
+    }
 
-    let build =
-        command "build" {
-            description "Builds the solution"
+    let pack = command "pack" {
+        description "Packs the solution"
+        Pipelines.setup
+        Command.pipeline { Stages.flaggedFormat }
+        Pipelines.build
+        Pipelines.executeTests
+        Pipelines.pack
+    }
 
-            Command.pipeline {
-                workingDir root
-                Prelude.restoreTools
-                Prelude.restoreSolution
-                HouseKeeping.clean
-                HouseKeeping.format
-                HouseKeeping.dryFormat
-                ProjectManagement.build
-            }
-        }
+    let publish = command "publish" {
+        description "Publishes the solution to a local or remote feed"
+        Pipelines.setup
+        Command.pipeline { Stages.flaggedFormat }
+        Pipelines.build
+        Pipelines.executeTests
+        Pipelines.pack
+        Pipelines.push
+    }
 
-    let test =
-        command "test" {
-            description "Builds and runs the test suite"
+    let test = command "test" {
+        description "Builds and runs the test suite"
+        Pipelines.setup
+        Command.pipeline { Stages.flaggedFormat }
+        Pipelines.executeTests
+    }
 
-            // Advertised but not read by any stage below. Kept so the flags do
-            // not disappear from `test --help`; wire them up or drop them.
-            addInput Options.watch
-
-            Command.pipeline {
-                workingDir root
-                Prelude.restoreTools
-                Prelude.restoreSolution
-                HouseKeeping.clean
-                HouseKeeping.format
-                HouseKeeping.dryFormat
-                ProjectManagement.build
-                Tests.build
-                Tests.execute
-            }
-        }
-
-    let publish =
-        command "publish" {
-            description "Packs the solution and pushes it to NuGet"
-
-            // Advertised but not read by any stage below.
-            addInput Options.GitHub.key
-
-            Command.pipeline {
-                workingDir root
-                Prelude.restoreTools
-                Prelude.restoreSolution
-                HouseKeeping.clean
-                HouseKeeping.format
-                HouseKeeping.dryFormat
-                ProjectManagement.build
-                Tests.build
-                Tests.execute
-                ProjectManagement.pack
-                ProjectManagement.publish
-            }
-        }
-
-    let docs =
-        command "docs" {
-            description "Builds the documentation, or serves it with --watch"
-
-            Command.pipeline {
-                workingDir root
-                Prelude.restoreTools
-                Prelude.restoreSolution
-                Documentation.generate
-            }
-        }
 
 let mainBuilder argsv =
     rootCommand argsv {
         description "Partas.TypeProvider"
-
         // One `addCommand` per line rather than one `addCommands [ ... ]`: the
         // template engine deletes the marker lines, and a conditional block at
         // the edge of a list literal changes what Fantomas formats it to.
         addCommand Commands.format
-        addCommand Commands.lint
-        addCommand Commands.build
         addCommand Commands.test
+        addCommand Commands.build
+        addCommand Commands.pack
         addCommand Commands.publish
-        addCommand Commands.docs
     }
 
 [<EntryPoint>]

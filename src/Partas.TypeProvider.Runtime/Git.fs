@@ -5,11 +5,12 @@
 /// spawns a process. Volatile values - shas, dirtiness, anything needing
 /// object or history traversal - are deferred to the `Runtime` module, which
 /// shells out to `git` in the consuming program instead.
-module Partas.TypeProvider.Runtime.Git
+module Partas.TypeProvider.BuildHelper.Runtime.Git
 
 open System
 open System.IO
 open System.Text
+open Microsoft.FSharp.Core.CompilerServices
 
 let private startsWith (prefix: string) (value: string) =
     value.StartsWith(prefix, StringComparison.Ordinal)
@@ -429,3 +430,5 @@ module Runtime =
         match tryExec workTree "status --porcelain" with
         | Some output -> output <> ""
         | None -> false
+[<assembly: TypeProviderAssembly "Partas.TypeProvider.BuildHelper.DesignTime">]
+do ()

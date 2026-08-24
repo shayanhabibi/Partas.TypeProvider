@@ -3,7 +3,7 @@ module Partas.TypeProvider.Tests.ProjectTests
 open System.IO
 open Expecto
 open Partas.TypeProvider.BuildHelper
-open Partas.TypeProvider.Runtime
+open Partas.TypeProvider.BuildHelper.Runtime
 
 /// The project provider is opt-in, so it needs its own instantiation. Project
 /// discovery is scoped to the root rather than walking up to find a solution

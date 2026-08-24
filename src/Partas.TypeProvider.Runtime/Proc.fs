@@ -5,8 +5,9 @@
 /// on the tool. Nothing here throws: a missing executable, a timeout or a
 /// crash all surface as `None`, because a provider that throws takes the whole
 /// provided type down with it.
-module Partas.TypeProvider.Runtime.Proc
+module Partas.TypeProvider.BuildHelper.Runtime.Proc
 
+open Microsoft.FSharp.Core.CompilerServices
 open System
 open System.Diagnostics
 
@@ -81,3 +82,5 @@ let tryOutputWith (environment: (string * string) list) (timeoutMs: int) (workin
 let exists (executable: string) (probeArguments: string) =
     tryRunWith [] 2000 (IO.Path.GetTempPath ()) executable probeArguments
     |> Option.isSome
+[<assembly: TypeProviderAssembly "Partas.TypeProvider.BuildHelper.DesignTime">]
+do ()

@@ -3,7 +3,7 @@ module Partas.TypeProvider.Tests.Say
 open System.IO
 open Expecto
 open Partas.TypeProvider.BuildHelper
-open Partas.TypeProvider.Runtime
+open Partas.TypeProvider.BuildHelper.Runtime
 
 /// The test project lives inside this repository, so the provider resolves
 /// against it.

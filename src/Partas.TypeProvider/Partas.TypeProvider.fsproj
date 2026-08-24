@@ -6,19 +6,18 @@
         <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
         <LangVersion>latest</LangVersion>
         <OutputType>Library</OutputType>
-        <RootNamespace>Partas.TypeProvider.BuildHelper</RootNamespace>
-        <AssemblyName>Partas.TypeProvider.BuildHelper</AssemblyName>
-        <PackageId>Partas.TypeProvider.BuildHelper</PackageId>
-        <Title>Partas.TypeProvider.BuildHelper</Title>
+        <RootNamespace>Partas.TypeProvider.BuildHelper.DesignTime</RootNamespace>
+        <AssemblyName>Partas.TypeProvider.BuildHelper.DesignTime</AssemblyName>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <IsFSharpDesignTimeProvider>true</IsFSharpDesignTimeProvider>
     </PropertyGroup>
 
     <ItemGroup>
         <None Include="../../README.md" Pack="true" PackagePath="\"/>
-        <Compile Include="Proc.fs" />
+        <Compile Include="../Partas.TypeProvider.Runtime/Proc.fs" />
+        <Compile Include="../Partas.TypeProvider.Runtime/Git.fs" />
+        <Compile Include="../Partas.TypeProvider.Runtime/Project.fs" />
         <Compile Include="VirtualDirParser.fs" />
-        <Compile Include="Git.fs" />
-        <Compile Include="Project.fs" />
         <Compile Include="Library.fs" />
     </ItemGroup>
 
