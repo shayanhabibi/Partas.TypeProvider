@@ -7,7 +7,7 @@ open Partas.TypeProviders
 
 /// The test project lives inside this repository, so the provider resolves
 /// against it.
-type Root = MyTypeProvider<"">
+type Root = BuildHelperProvider<"">
 
 /// Builds a `.git` directory out of plain files, so the design-time reader is
 /// exercised without needing the git binary.

@@ -8,7 +8,6 @@
 module Partas.TypeProvider.Git
 
 open System
-open System.Diagnostics
 open System.IO
 open System.Text
 
@@ -325,10 +324,17 @@ let upstreamOf (entries: Config.Entry list) (branch: string) =
 /// program, not in the compiler, and must never throw.
 module Runtime =
 
-    /// Prefixed to every invocation: never page, never prompt for credentials,
-    /// and never take the optional index lock, which would otherwise contend
-    /// with the user's own git commands.
+    /// Prefixed to every invocation: never page, never consult a credential
+    /// helper, and never wake the filesystem monitor daemon.
     let private safetyArgs = "--no-pager -c credential.helper= -c core.fsmonitor=false"
+
+    /// Applied to every invocation: never prompt for credentials, and never
+    /// take the optional index lock, which would otherwise contend with the
+    /// user's own git commands.
+    let private safetyEnvironment =
+        [ "GIT_OPTIONAL_LOCKS", "0"
+          "GIT_TERMINAL_PROMPT", "0"
+          "GCM_INTERACTIVE", "never" ]
 
     let private defaultTimeoutMs = 2000
 
@@ -406,45 +412,10 @@ module Runtime =
         let text = headText gitDir
         text <> "" && not (startsWith "ref:" text)
 
-    /// Runs `git` in `workTree`, returning stdout on success and `None` on
-    /// failure, non-zero exit, timeout, or a missing `git`.
+    /// Runs `git` in `workTree`, returning trimmed stdout on success and
+    /// `None` on failure, non-zero exit, timeout, or a missing `git`.
     let tryExecTimeout (timeoutMs: int) (workTree: string) (args: string) =
-        try
-            let psi = ProcessStartInfo("git", safetyArgs + " " + args)
-            psi.WorkingDirectory <- workTree
-            psi.UseShellExecute <- false
-            psi.CreateNoWindow <- true
-            psi.RedirectStandardInput <- true
-            psi.RedirectStandardOutput <- true
-            psi.RedirectStandardError <- true
-            psi.Environment.["GIT_OPTIONAL_LOCKS"] <- "0"
-            psi.Environment.["GIT_TERMINAL_PROMPT"] <- "0"
-            psi.Environment.["GCM_INTERACTIVE"] <- "never"
-
-            use proc = new Process(StartInfo = psi)
-
-            if not (proc.Start()) then
-                None
-            else
-                // Drain both pipes concurrently; a full pipe buffer would
-                // otherwise deadlock against WaitForExit.
-                let stdout = proc.StandardOutput.ReadToEndAsync()
-                let stderr = proc.StandardError.ReadToEndAsync()
-                proc.StandardInput.Close()
-
-                if not (proc.WaitForExit timeoutMs) then
-                    (try
-                        proc.Kill()
-                     with _ ->
-                         ())
-
-                    None
-                elif stdout.Wait 500 && stderr.Wait 500 && proc.ExitCode = 0 then
-                    Some(stdout.Result.Trim())
-                else
-                    None
-        with _ ->
-            None
+        Proc.tryOutputWith safetyEnvironment timeoutMs workTree "git" (safetyArgs + " " + args)
 
     let tryExec (workTree: string) (args: string) =
         tryExecTimeout defaultTimeoutMs workTree args
@@ -454,8 +425,7 @@ module Runtime =
         tryExec workTree args |> Option.defaultValue ""
 
     /// Whether a usable `git` is on PATH in the consuming environment.
-    let isAvailable () =
-        tryExec (Path.GetTempPath()) "--version" |> Option.isSome
+    let isAvailable () = Proc.exists "git" "--version"
 
     /// True when the working tree or index has changes.
     let isDirty (workTree: string) =

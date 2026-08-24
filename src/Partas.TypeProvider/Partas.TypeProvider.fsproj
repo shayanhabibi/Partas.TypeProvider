@@ -15,8 +15,10 @@
 
     <ItemGroup>
         <None Include="../../README.md" Pack="true" PackagePath="\"/>
+        <Compile Include="Proc.fs" />
         <Compile Include="VirtualDirParser.fs" />
         <Compile Include="Git.fs" />
+        <Compile Include="Project.fs" />
         <Compile Include="Library.fs" />
     </ItemGroup>
 
