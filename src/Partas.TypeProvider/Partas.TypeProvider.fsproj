@@ -5,11 +5,11 @@
         <DefineConstants>IS_DESIGNTIME</DefineConstants>
         <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
         <LangVersion>latest</LangVersion>
-        <RootNamespace>Partas.TypeProvider</RootNamespace>
-        <AssemblyName>Partas.TypeProvider</AssemblyName>
-        <PackageId>Partas.TypeProvider</PackageId>
         <OutputType>Library</OutputType>
-        <Title>Partas.TypeProvider</Title>
+        <RootNamespace>Partas.TypeProvider.BuildHelper</RootNamespace>
+        <AssemblyName>Partas.TypeProvider.BuildHelper</AssemblyName>
+        <PackageId>Partas.TypeProvider.BuildHelper</PackageId>
+        <Title>Partas.TypeProvider.BuildHelper</Title>
         <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 

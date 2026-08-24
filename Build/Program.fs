@@ -37,7 +37,7 @@ let private getConfig: string -> DotNet.BuildConfiguration =
 /// <summary>Stages every command opens with. All are skipped by <c>--quick</c>.</summary>
 module Prelude =
     let restoreTools =
-        inputs {
+        input {
             let! quick = Options.quick
 
             return stage "restore tools" {
@@ -47,7 +47,7 @@ module Prelude =
         }
 
     let restoreSolution =
-        inputs {
+        input {
             let! quick = Options.quick
 
             return stage "restore" {
@@ -60,7 +60,7 @@ module Prelude =
 
 module HouseKeeping =
     let clean =
-        inputs {
+        input {
             let! quick = Options.quick
 
             return stage "clean" {
@@ -96,14 +96,14 @@ module HouseKeeping =
 
     /// The `format` command: formats, or checks only under --dry-format.
     let formatCommand =
-        inputs {
+        input {
             let! dryFormat = Options.dryFormat
             return stage "format" { run (fun _ -> if dryFormat then formatCheckImpl () else formatImpl ()) }
         }
 
     /// Opt-in formatting inside another command, via --format.
     let format =
-        inputs {
+        input {
             let! format = Options.format
 
             return stage "format" {
@@ -119,7 +119,7 @@ module HouseKeeping =
     /// Opt-in format checking inside another command, via --dry-format.
     /// Suppressed when --format was passed, which has already fixed the files.
     let dryFormat =
-        inputs {
+        input {
             let! format = Options.format
             and! dryFormat = Options.dryFormat
 
@@ -135,7 +135,7 @@ module HouseKeeping =
 
 module ProjectManagement =
     let build =
-        inputs {
+        input {
             let! config = Options.config
 
             return stage "build" {
@@ -175,7 +175,7 @@ module ProjectManagement =
         }
 
     let publish =
-        inputs {
+        input {
             let! apiKey = Options.NuGet.key
 
             let inline publishToSourceWithKey apiKey source =
@@ -208,7 +208,7 @@ module ProjectManagement =
 
 module Tests =
     let build =
-        inputs {
+        input {
             let! skipTests = Options.skipTests
             and! config = Options.config
 
@@ -228,7 +228,7 @@ module Tests =
         }
 
     let execute =
-        inputs {
+        input {
             let! skipTests = Options.skipTests
 
             return stage "test" {
@@ -246,7 +246,7 @@ module Tests =
 module Documentation =
     /// Serves under --watch, builds otherwise.
     let generate =
-        inputs {
+        input {
             let! watch = Options.watch
 
             return stage "docs" {
@@ -263,7 +263,7 @@ module Commands =
         command "format" {
             description "Formats all source files"
 
-            pipeline "format" {
+            Command.pipeline {
                 workingDir root
                 Prelude.restoreTools
                 HouseKeeping.formatCommand
@@ -273,8 +273,7 @@ module Commands =
     let lint =
         command "lint" {
             description "Checks formatting of all source files"
-
-            pipeline "lint" {
+            Command.pipeline {
                 workingDir root
                 Prelude.restoreTools
                 HouseKeeping.dryFormatCommand
@@ -285,7 +284,7 @@ module Commands =
         command "build" {
             description "Builds the solution"
 
-            pipeline "build" {
+            Command.pipeline {
                 workingDir root
                 Prelude.restoreTools
                 Prelude.restoreSolution
@@ -304,7 +303,7 @@ module Commands =
             // not disappear from `test --help`; wire them up or drop them.
             addInput Options.watch
 
-            pipeline "test" {
+            Command.pipeline {
                 workingDir root
                 Prelude.restoreTools
                 Prelude.restoreSolution
@@ -324,7 +323,7 @@ module Commands =
             // Advertised but not read by any stage below.
             addInput Options.GitHub.key
 
-            pipeline "publish" {
+            Command.pipeline {
                 workingDir root
                 Prelude.restoreTools
                 Prelude.restoreSolution
@@ -332,6 +331,8 @@ module Commands =
                 HouseKeeping.format
                 HouseKeeping.dryFormat
                 ProjectManagement.build
+                Tests.build
+                Tests.execute
                 ProjectManagement.pack
                 ProjectManagement.publish
             }
@@ -341,7 +342,7 @@ module Commands =
         command "docs" {
             description "Builds the documentation, or serves it with --watch"
 
-            pipeline "docs" {
+            Command.pipeline {
                 workingDir root
                 Prelude.restoreTools
                 Prelude.restoreSolution

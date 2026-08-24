@@ -5,28 +5,21 @@
 /// on the tool. Nothing here throws: a missing executable, a timeout or a
 /// crash all surface as `None`, because a provider that throws takes the whole
 /// provided type down with it.
-module Partas.TypeProvider.Proc
+module Partas.TypeProvider.Runtime.Proc
 
 open System
 open System.Diagnostics
 
-/// The outcome of a process that started and exited. A non-zero `ExitCode` is
-/// reported rather than swallowed, so callers can decide whether it means "no
-/// answer" or "an answer, with complaints on stderr".
 type Result =
     { ExitCode: int
       StandardOutput: string
       StandardError: string }
 
 /// How long to wait for the pipes to finish once the process itself has
-/// exited. The data is already buffered by then, so this only guards against
-/// a reader task that never completes.
+/// exited. Guards against a reader task that never completes.
 let private drainTimeoutMs = 500
 
-/// Runs `executable` and waits up to `timeoutMs` for it to exit, returning
-/// `None` if it cannot be started, does not exit in time, or throws on the
-/// way. `environment` is applied on top of the inherited environment.
-///
+/// Low resilience execution of a tool, with quick bail-out and fallback to None.
 /// stdin is redirected and closed immediately: a tool that decides to prompt
 /// gets EOF instead of blocking forever on a console that is not there.
 let tryRunWith (environment: (string * string) list) (timeoutMs: int) (workingDirectory: string) (executable: string) (arguments: string) =
@@ -73,13 +66,9 @@ let tryRunWith (environment: (string * string) list) (timeoutMs: int) (workingDi
     with _ ->
         None
 
-/// `tryRunWith` with an unmodified environment.
 let tryRun (timeoutMs: int) (workingDirectory: string) (executable: string) (arguments: string) =
     tryRunWith [] timeoutMs workingDirectory executable arguments
 
-/// Trimmed stdout of a successful run. `None` covers a non-zero exit as well
-/// as the failures `tryRunWith` reports, for callers that treat both as
-/// "no answer".
 let tryOutputWith (environment: (string * string) list) (timeoutMs: int) (workingDirectory: string) (executable: string) (arguments: string) =
     tryRunWith environment timeoutMs workingDirectory executable arguments
     |> Option.bind (fun result ->
@@ -88,8 +77,7 @@ let tryOutputWith (environment: (string * string) list) (timeoutMs: int) (workin
         else
             None)
 
-/// Whether `executable` can be started at all, used to gate members whose
-/// value depends on a tool being installed.
+/// Whether `executable` can be started at all
 let exists (executable: string) (probeArguments: string) =
     tryRunWith [] 2000 (IO.Path.GetTempPath ()) executable probeArguments
     |> Option.isSome

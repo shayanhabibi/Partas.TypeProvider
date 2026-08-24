@@ -5,7 +5,7 @@
 /// spawns a process. Volatile values - shas, dirtiness, anything needing
 /// object or history traversal - are deferred to the `Runtime` module, which
 /// shells out to `git` in the consuming program instead.
-module Partas.TypeProvider.Git
+module Partas.TypeProvider.Runtime.Git
 
 open System
 open System.IO
@@ -14,9 +14,7 @@ open System.Text
 let private startsWith (prefix: string) (value: string) =
     value.StartsWith(prefix, StringComparison.Ordinal)
 
-/// Minimal reader for the git config format. Covers section headers with
-/// optional quoted subsections, `key = value`, comments and quoted values.
-/// Not the full grammar: no `include`, no line continuations.
+/// Minimal (partial grammar support) reader for the git config format.
 module Config =
 
     type Entry =
@@ -147,8 +145,7 @@ let private resolveGitDirFile (dotGitFile: string) =
     with _ ->
         None
 
-/// Walks up from `startDir` looking for a working tree. Returns `None` outside
-/// a repository rather than throwing, so the provider can degrade legibly.
+/// Walks up from `startDir` looking for a working tree.
 let discover (startDir: string) =
     let rec walk (dir: DirectoryInfo) =
         if isNull (box dir) then

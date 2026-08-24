@@ -9,7 +9,7 @@
 /// The design-time values are deliberately approximate. They are read straight
 /// out of the project XML with no condition evaluation, and exist only to be
 /// shown in a doc comment as a hint. Nothing compiles against them.
-module Partas.TypeProvider.Project
+module Partas.TypeProvider.Runtime.Project
 
 open System
 open System.Collections.Concurrent

@@ -1,5 +1,54 @@
 # Partas.TypeProvider
 
+> Composite provider which includes edits of [`EasyBuild.FileSystemProvider`'s](https://github.com/easybuild-org/EasyBuild.FileSystemProvider)
+> `AbsoluteFileSystem` and `VirtualFileSystem` providers.
+>
+> All credit to the original authors and contributors.
+
+## Partas.TypeProvider.BuildHelper
+
+A composite type provider for common script tasks that combines
+`EasyBuild.FileSystemProvider`'s with a `GitProvider` and `ProjectProvider`.
+
+```fsharp
+open Partas.TypeProvider.BuildHelper
+
+type Build = BuildHelperProvider<"..", capabilityFullOverride = true>
+
+// Each provider is shelled from a separate property, to keep tooling suggestions
+// as relevant and helpful.
+type FileProvider = Build.FileSystem
+type GitProvider = Build.Git
+type ProjectProvider = Build.Project
+
+// Virtual file system would require a second literal string passed
+// to the `BuildHelperProvider` as the configuration.
+// type VirtualProvider = Build.VirtualSystem
+```
+
+### GitProvider
+
+The git provider provides nested types when there is some guarantee to their existence,
+such as branch names (divided between local and remote), remotes, and tags.
+
+Other information can be queried through the type provider, and it will provide the value
+at runtime by shelling `git` commands.
+
+### ProjectProvider
+
+The project provider provides nested types to detected project files, with helpers to
+scaffold cli commands for common operations routed with those specific projects
+as the targets.
+
+Also provides utility extraction of properties, such as `Version`, and provides
+the current value within the member documentation as a design time helper.
+
+## Type Parameters
+
+See the xml documentation on the type provider.
+
+---
+
 ## Build CLI
 
 Every repository task runs through the `Build` project rather than a script, so

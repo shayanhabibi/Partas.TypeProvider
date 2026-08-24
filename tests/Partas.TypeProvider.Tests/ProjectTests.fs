@@ -2,14 +2,14 @@ module Partas.TypeProvider.Tests.ProjectTests
 
 open System.IO
 open Expecto
-open Partas.TypeProvider
-open Partas.TypeProviders
+open Partas.TypeProvider.BuildHelper
+open Partas.TypeProvider.Runtime
 
 /// The project provider is opt-in, so it needs its own instantiation. Project
 /// discovery is scoped to the root rather than walking up to find a solution
 /// the way GitProvider walks up to find a repository, so this points at the
 /// repository root explicitly instead of defaulting to the test project.
-type Repo = BuildHelperProvider<"../..", capabilityProject=true>
+type Repo = BuildHelperProvider<"../..", capabilityFullOverride=true>
 
 let private write (root: string) (relative: string) (contents: string) =
     let path = Path.Combine (root, relative.Replace ('/', Path.DirectorySeparatorChar))
@@ -300,41 +300,41 @@ let providerTests =
     testList
         "ProjectProvider"
         [ test "finds this repository's projects through its .slnx" {
-              Expect.isTrue Repo.ProjectProvider.HasProjects "projects found"
+              Expect.isTrue Repo.Project.HasProjects "projects found"
 
-              Expect.equal (Path.GetExtension Repo.ProjectProvider.SolutionFile) ".slnx" "discovered via the solution file"
+              Expect.equal (Path.GetExtension Repo.Project.SolutionFile) ".slnx" "discovered via the solution file"
           }
 
           test "provides compile-time structure" {
-              Expect.equal Repo.ProjectProvider.``Partas.TypeProvider``.Name "Partas.TypeProvider" "project name"
+              Expect.equal Repo.Project.``Partas.TypeProvider``.Name "Partas.TypeProvider" "project name"
 
               Expect.equal
-                  Repo.ProjectProvider.``Partas.TypeProvider``.RelativePath
+                  Repo.Project.``Partas.TypeProvider``.RelativePath
                   "src/Partas.TypeProvider/Partas.TypeProvider.fsproj"
                   "relative path"
           }
 
           test "builds command lines without running anything" {
               Expect.equal
-                  (Repo.ProjectProvider.``Partas.TypeProvider``.Pack [ "-c"; "Release" ])
-                  [ "pack"; Repo.ProjectProvider.``Partas.TypeProvider``.Path; "-c"; "Release" ]
+                  (Repo.Project.``Partas.TypeProvider``.Pack [ "-c"; "Release" ])
+                  [ "pack"; Repo.Project.``Partas.TypeProvider``.Path; "-c"; "Release" ]
                   "pack arguments"
 
-              Expect.equal (Repo.ProjectProvider.Build.Run ()) [ "run"; "--project"; Repo.ProjectProvider.Build.Path ] "run arguments"
+              Expect.equal (Repo.Project.Build.Run ()) [ "run"; "--project"; Repo.Project.Build.Path ] "run arguments"
           }
 
           test "reads real property values through msbuild" {
-              Expect.isTrue (Repo.ProjectProvider.IsDotnetAvailable ()) "dotnet is on PATH in this environment"
+              Expect.isTrue (Repo.Project.IsDotnetAvailable ()) "dotnet is on PATH in this environment"
 
-              Expect.equal Repo.ProjectProvider.``Partas.TypeProvider``.TargetFramework "netstandard2.0" "evaluated, not read from XML"
+              Expect.equal Repo.Project.``Partas.TypeProvider``.TargetFramework "netstandard2.0" "evaluated, not read from XML"
 
               Expect.equal
-                  (Repo.ProjectProvider.``Partas.TypeProvider``.Property "RepositoryUrl")
+                  (Repo.Project.``Partas.TypeProvider``.Property "RepositoryUrl")
                   "https://github.com/shayanhabibi/Partas.TypeProvider"
                   "the escape hatch reaches Directory.Build.props"
 
               Expect.equal
-                  (Repo.ProjectProvider.``Partas.TypeProvider``.Property "NoSuchPropertyAnywhere")
+                  (Repo.Project.``Partas.TypeProvider``.Property "NoSuchPropertyAnywhere")
                   ""
                   "an undeclared property is empty, not an error"
           } ]

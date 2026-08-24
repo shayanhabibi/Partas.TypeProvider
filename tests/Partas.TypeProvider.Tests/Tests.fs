@@ -2,12 +2,12 @@ module Partas.TypeProvider.Tests.Say
 
 open System.IO
 open Expecto
-open Partas.TypeProvider
-open Partas.TypeProviders
+open Partas.TypeProvider.BuildHelper
+open Partas.TypeProvider.Runtime
 
 /// The test project lives inside this repository, so the provider resolves
 /// against it.
-type Root = BuildHelperProvider<"">
+type Root = BuildHelperProvider<"", capabilityFullOverride = true>
 
 /// Builds a `.git` directory out of plain files, so the design-time reader is
 /// exercised without needing the git binary.
@@ -262,19 +262,19 @@ let runtimeTests =
 let providerTests =
     testList "GitProvider" [
         test "provides the repository this test lives in" {
-            Expect.isTrue Root.GitProvider.IsRepository "found the repository"
+            Expect.isTrue Root.Git.IsRepository "found the repository"
 
             Expect.equal
-                (Path.GetFullPath Root.GitProvider.WorkingDirectory)
+                (Path.GetFullPath Root.Git.WorkingDirectory)
                 (Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "..")))
                 "repository root"
         }
 
         test "exposes runtime members without throwing" {
-            Root.GitProvider.Head |> ignore
-            Root.GitProvider.HeadBranch |> ignore
-            Root.GitProvider.IsDetached |> ignore
-            Root.GitProvider.IsDirty() |> ignore
-            Expect.isTrue (Root.GitProvider.IsGitAvailable()) "git is on PATH in this environment"
+            Root.Git.Head |> ignore
+            Root.Git.HeadBranch |> ignore
+            Root.Git.IsDetached |> ignore
+            Root.Git.IsDirty() |> ignore
+            Expect.isTrue (Root.Git.IsGitAvailable()) "git is on PATH in this environment"
         }
     ]

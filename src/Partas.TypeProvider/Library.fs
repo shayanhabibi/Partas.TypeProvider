@@ -1,10 +1,11 @@
-module Partas.TypeProvider.FileSystemProviders
+module Partas.TypeProvider.DesignTime
 
 open System
 open System.Reflection
 open ProviderImplementation.ProvidedTypes
 open Microsoft.FSharp.Core.CompilerServices
 open System.IO
+open Partas.TypeProvider.Runtime
 
 /// Materialises a lazy filesystem enumeration, yielding nothing for entries the
 /// compiler cannot read. `Directory.Enumerate*` defers its work, so the throw
@@ -120,7 +121,7 @@ let private watchDir (directoryInfo: DirectoryInfo) =
     watcher
 
 let private makeFileProvider (typ: ProvidedTypeDefinition) (root: DirectoryInfo) = typ.AddMemberDelayed <| fun () ->
-    let fileProvider = ProvidedTypeDefinition("FileProvider", Some typeof<obj>, hideObjectMethods = true)
+    let fileProvider = ProvidedTypeDefinition("FileSystem", Some typeof<obj>, hideObjectMethods = true)
     fileProvider.AddXmlDoc "Interface representing a file provider"
     createDirectoryProperties root fileProvider
     fileProvider
@@ -129,7 +130,7 @@ let private makeVirtualFileProvider
     (typ: ProvidedTypeDefinition)
     (rootDirectory: DirectoryInfo)
     (rootNode: VirtualDirectory.Parser.INode) = typ.AddMemberDelayed <| fun () ->
-    let virtualProvider = ProvidedTypeDefinition("VirtualFileProvider", Some typeof<obj>, hideObjectMethods = true)
+    let virtualProvider = ProvidedTypeDefinition("VirtualFileSystem", Some typeof<obj>, hideObjectMethods = true)
     VirtualDirectory.createInodeProperties rootNode rootDirectory.FullName virtualProvider
     virtualProvider.AddXmlDoc "Interface representing a virtual file provider"
     virtualProvider
@@ -157,7 +158,7 @@ let private isUsableMemberName (name: string) =
 let private makeGitProvider
     (typ: ProvidedTypeDefinition)
     (rootDirectory: DirectoryInfo) = typ.AddMemberDelayed <| fun () ->
-    let gitProvider = ProvidedTypeDefinition("GitProvider", Some typeof<obj>, hideObjectMethods = true)
+    let gitProvider = ProvidedTypeDefinition("Git", Some typeof<obj>, hideObjectMethods = true)
 
     match Git.discover rootDirectory.FullName with
     | None ->
@@ -399,7 +400,7 @@ let private makeProjectProvider
     (typ: ProvidedTypeDefinition)
     (rootDirectory: DirectoryInfo) = typ.AddMemberDelayed <| fun () ->
     let projectProvider =
-        ProvidedTypeDefinition("ProjectProvider", Some typeof<obj>, hideObjectMethods = true)
+        ProvidedTypeDefinition("Project", Some typeof<obj>, hideObjectMethods = true)
 
     let root = rootDirectory.FullName
     let projects = Project.discover root
@@ -540,7 +541,7 @@ let private makeProjectProvider
 [<TypeProvider>]
 type BuildHelperProvider(config: TypeProviderConfig) as this =
     inherit TypeProviderForNamespaces(config)
-    let namespaceName = "Partas.TypeProviders"
+    let namespaceName = "Partas.TypeProvider.BuildHelper"
     let name = "BuildHelperProvider"
     let assembly = Assembly.GetExecutingAssembly()
     let thisType =
@@ -559,16 +560,55 @@ type BuildHelperProvider(config: TypeProviderConfig) as this =
         |> addStaticSummary "The repository root path. Defaults to the current working directory."
         ProvidedStaticParameter("virtualPathConfig", typeof<string>, "")
         |> addStaticSummary "Virtual path configuration to provide compile time safety for paths that may not exist at design time."
-        ProvidedStaticParameter("capabilityGit", typeof<bool>, true)
+        ProvidedStaticParameter("capabilityGit", typeof<bool>, false)
         |> addStaticSummary "Whether to provide a <c>GitProvider</c> instance."
         ProvidedStaticParameter("capabilityFileSystem", typeof<bool>, true)
         |> addStaticSummary "Whether to provide a <c>FileProvider</c> instance."
         ProvidedStaticParameter("capabilityProject", typeof<bool>, false)
         |> addStaticSummary "Whether to provide a <c>ProjectProvider</c> instance. Off by default: its property members shell out to <c>dotnet msbuild</c> at runtime, so enabling it makes the consuming program depend on the SDK being installed."
+        ProvidedStaticParameter("capabilityFullOverride", typeof<bool>, false)
+        |> addStaticSummary "Whether to override all capability switches to <c>true</c>. Off by default."
     ]
-    let getCapabilityGit (parametersValue: obj array) = parametersValue[2] :?> bool
-    let getCapabilityFileSystem (parametersValue: obj array) = parametersValue[3] :?> bool
-    let getCapabilityProject (parametersValue: obj array) = parametersValue[4] :?> bool
+    // language=xml
+    let thisTypeXmlDoc = """
+<summary>
+<para>
+TypeProvider for build scripts and projects, providing compile-time literals,
+hints, and scaffolding for common tasks.
+</para>
+<para>
+The <c>BuildHelperProvider</c> provides several distinct providers which are optional,
+but share a common feature of being defined at the root of a repository.
+</para>
+</summary>
+<typeparam name="rootPath">
+Path to the repository root. Absolute path, or relative.
+</typeparam>
+<typeparam name="virtualPathConfig">
+<c>EasyBuild.FileSystemProvider</c> <c>VirtualFileSystem</c> type provider configuration
+shelled from the repository root.
+</typeparam>
+<typeparam name="capabilityGit">
+Whether to provide a <c>GitProvider</c> instance. Defaults to <c>false</c>.
+</typeparam>
+<typeparam name="capabilityFileSystem">
+Whether to provide a <c>FileProvider</c> and/or <c>VirtualFileProvider</c> instance. Defaults to <c>true</c>.
+</typeparam>
+<typeparam name="capabilityProject">
+Whether to provide a <c>ProjectProvider</c> instance. Defaults to <c>false</c>.
+</typeparam>
+<typeparam name="capabilityFullOverride">
+A switch to override all capability switches to <c>true</c>. Defaults to <c>false</c>.
+</typeparam>
+"""
+    do thisType.AddXmlDoc thisTypeXmlDoc
+    let getCapabilityOverride (parametersValue: obj array) = parametersValue[5] :?> bool
+    let getCapability (position: int) (parametersValue: obj array)=
+        parametersValue[position] :?> bool
+        || getCapabilityOverride parametersValue
+    let getCapabilityGit = getCapability 2
+    let getCapabilityFileSystem = getCapability 3
+    let getCapabilityProject = getCapability 4
 
     let getRootDirectory (parametersValue: obj array) =
         let rootPath = parametersValue[0] :?> string
