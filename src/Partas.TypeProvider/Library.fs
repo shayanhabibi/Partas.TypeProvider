@@ -9,23 +9,6 @@ open Partas.TypeProvider.BuildHelper.Runtime
 
 [<AutoOpen>]
 module private Helpers =
-    open System.ComponentModel
-
-    // ===================================================
-    // Does not seem to work influence editor intellisense
-    let private editorBrowsableNever =
-        let ctor = typeof<EditorBrowsableAttribute>.GetConstructor([| typeof<EditorBrowsableState> |])
-        let typedArgument = CustomAttributeTypedArgument(typeof<EditorBrowsableState>, EditorBrowsableState.Never)
-        { new CustomAttributeData() with
-            member _.Constructor = ctor
-            member _.ConstructorArguments = upcast [| typedArgument |]
-            member _.NamedArguments = upcast [||] }
-
-    type ProvidedProperty with
-        member this.HideFromIntelliSense() =
-            this.AddCustomAttribute editorBrowsableNever
-            this
-    // ===================================================
 
     /// Materialises a lazy filesystem enumeration, yielding nothing for entries the
     /// compiler cannot read. `Directory.Enumerate*` defers its work, so the throw
