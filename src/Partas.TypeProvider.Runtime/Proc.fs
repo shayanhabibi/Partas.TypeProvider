@@ -18,6 +18,7 @@ type Result =
 
 /// How long to wait for the pipes to finish once the process itself has
 /// exited. Guards against a reader task that never completes.
+[<Literal>]
 let private drainTimeoutMs = 500
 
 /// Low resilience execution of a tool, with quick bail-out and fallback to None.

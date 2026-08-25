@@ -542,7 +542,8 @@ module Runtime =
         else
             [ verb; projectPath ]
             @ extra
-
+    let commandString verb projectPath extra =
+        String.Join(" ", command verb projectPath extra)
     /// Whether a usable `dotnet` is on PATH in the consuming environment.
     let isAvailable () =
         Proc.exists "dotnet" "--version"

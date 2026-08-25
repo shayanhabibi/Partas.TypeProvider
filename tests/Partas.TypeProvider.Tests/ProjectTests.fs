@@ -323,6 +323,13 @@ let providerTests =
               Expect.equal (Repo.Project.Build.Run ()) [ "run"; "--project"; Repo.Project.Build.Path ] "run arguments"
           }
 
+          test "Accepts string arguments and builds string output" {
+              Expect.equal
+                  (Repo.Project.``Partas.TypeProvider``.Pack("-c Release"))
+                  ("pack " + Repo.Project.``Partas.TypeProvider``.Path + " -c Release")
+                  "pack arguments"
+          }
+
           test "reads real property values through msbuild" {
               Expect.isTrue (Repo.Project.IsDotnetAvailable ()) "dotnet is on PATH in this environment"
 

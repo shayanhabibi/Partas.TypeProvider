@@ -17,7 +17,10 @@
         <Compile Include="../Partas.TypeProvider.Runtime/Proc.fs" />
         <Compile Include="../Partas.TypeProvider.Runtime/Git.fs" />
         <Compile Include="../Partas.TypeProvider.Runtime/Project.fs" />
-        <Compile Include="VirtualDirParser.fs" />
+        <Compile Include="Common.fs" />
+        <Compile Include="FileSystemProvider.fs" />
+        <Compile Include="GitProvider.fs" />
+        <Compile Include="ProjectProvider.fs" />
         <Compile Include="Library.fs" />
     </ItemGroup>
 
