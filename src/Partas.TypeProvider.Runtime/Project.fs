@@ -544,6 +544,13 @@ module Runtime =
             @ extra
     let commandString verb projectPath extra =
         String.Join(" ", command verb projectPath extra)
+    let commandWithPropSetters (verb: string) (projectPath: string) (extra: string list) (propSetters: (string * string) list) =
+        let extra = if isNull (box extra) then [] else extra
+        let propSetters = if isNull (box propSetters) then [] else propSetters
+        command verb projectPath (extra @ List.map (fun (name, value) -> "-p:" + name + "=" + value) propSetters)
+    let commandStringWithPropSetters (verb: string) (projectPath: string) (extra: string) (propSetters: (string * string) list) =
+        String.Join(" ", commandWithPropSetters verb projectPath [extra] propSetters)
+
     /// Whether a usable `dotnet` is on PATH in the consuming environment.
     let isAvailable () =
         Proc.exists "dotnet" "--version"

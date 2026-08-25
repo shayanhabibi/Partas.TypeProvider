@@ -1,3 +1,3 @@
-### 0.2.1 - Unreleased
+### 0.2.2 - Unreleased
 
 * Initial release.

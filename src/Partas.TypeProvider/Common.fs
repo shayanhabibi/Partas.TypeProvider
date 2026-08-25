@@ -71,6 +71,7 @@ module internal Helpers =
     let br = "<br/>"
     [<Literal>]
     let rn = "\n"
+    let param (name: string) = Wrapper($"<param name=\"{name}\">", "</param>")
     let summary = TagBuilder("summary")
     let remarks = TagBuilder("remarks")
     let example = TagBuilder("example")

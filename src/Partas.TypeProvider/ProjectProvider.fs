@@ -177,9 +177,41 @@ let make
                             typeof<string>,
                             isStatic = true,
                             invokeCode = fun args -> <@@ Project.Runtime.commandString verb path [ (%%args[0]: string) ] @@>
-                        ).addXmlDoc { listDocString }
+                        ).addXmlDoc {
+                            summary { "The args for a"; c { "dotnet" }; "command that"; description; "this project." }
+                            remarks { "Returns the arguments only - nothing is executed. Extra arguments are appended." }
+                        }
 
-                    projectType.AddMembers [ bare; withArguments; withString ]
+                    let withPropSetters =
+                        ProvidedMethod(
+                            methodName,
+                            [
+                                ProvidedParameter("arguments", typeof<string list>)
+                                ProvidedParameter("propertyOverrides", typeof<(string * string) list>)
+                            ],
+                            typeof<string list>,
+                            isStatic = true,
+                            invokeCode = fun args -> <@@ Project.Runtime.commandWithPropSetters verb path (%%args[0]: string list) (%%args[1]: (string * string) list) @@>
+                        ).addXmlDoc {
+                            summary { "The args for a"; c { "dotnet" }; "command that"; description; "this project." }
+                            remarks { "Returns the arguments only - nothing is executed. Extra arguments are appended. Property overrides are applied to the command line after arguments." }
+                        }
+                    let withStringPropSetters =
+                        ProvidedMethod(
+                            methodName,
+                            [
+                                ProvidedParameter("arguments", typeof<string>)
+                                ProvidedParameter("propertyOverrides", typeof<(string * string) list>)
+                            ],
+                            typeof<string>,
+                            isStatic = true,
+                            invokeCode = fun args -> <@@ Project.Runtime.commandStringWithPropSetters verb path (%%args[0]: string) (%%args[1]: (string * string) list) @@>
+                        ).addXmlDoc {
+                            summary { "The args for a"; c { "dotnet" }; "command that"; description; "this project." }
+                            remarks { "Returns the arguments only - nothing is executed. Extra arguments are appended. Property overrides are applied to the command line after arguments." }
+                        }
+
+                    projectType.AddMembers [ bare; withArguments; withString; withPropSetters; withStringPropSetters ]
 
                 projectType
 

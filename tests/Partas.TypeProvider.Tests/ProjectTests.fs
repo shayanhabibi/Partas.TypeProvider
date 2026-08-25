@@ -330,6 +330,21 @@ let providerTests =
                   "pack arguments"
           }
 
+          test "Accepts string arguments with prop overrides" {
+              Expect.equal
+                  (Repo.Project.``Partas.TypeProvider``.Pack([ "-c"; "Release" ], [ "Version", "1.2.3" ]))
+                  [ "pack"; Repo.Project.``Partas.TypeProvider``.Path; "-c"; "Release"; "-p:Version=1.2.3" ]
+                  "pack arguments"
+          }
+
+          test "Accepts string with prop overrides" {
+              Expect.equal
+                  (Repo.Project.``Partas.TypeProvider``.Pack("-c Release" , [ "Version", "1.2.3" ]))
+                  ("pack " + Repo.Project.``Partas.TypeProvider``.Path + " -c Release -p:Version=1.2.3")
+                  "pack arguments"
+
+          }
+
           test "reads real property values through msbuild" {
               Expect.isTrue (Repo.Project.IsDotnetAvailable ()) "dotnet is on PATH in this environment"
 
