@@ -215,4 +215,17 @@ let make
 
                 projectType
 
+    let getAllProjectsMethod =
+        ProvidedMethod(
+            "AllProjects",
+            [ ProvidedParameter("searchRuntime", typeof<bool>, optionalValue = false) ],
+            typeof<Project.ProjectRef list>,
+            isStatic = true,
+            invokeCode = fun args -> <@@ if not (%%args[0]: bool) then projects else Project.discover root @@>
+            ).addXmlDoc {
+            summary { "All projects found. Pass"; c { "true" }; "to retrieve the projects at runtime." }
+            param "searchRuntime" { "Whether to only return projects that have been evaluated at runtime." }
+        }
+    projectProvider.AddMember getAllProjectsMethod
+
     projectProvider
