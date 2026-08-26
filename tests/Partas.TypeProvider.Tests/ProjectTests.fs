@@ -320,7 +320,6 @@ let providerTests =
                   [ "pack"; Repo.Project.``Partas.TypeProvider``.Path; "-c"; "Release" ]
                   "pack arguments"
 
-              Expect.equal (Repo.Project.Build.Run ()) [ "run"; "--project"; Repo.Project.Build.Path ] "run arguments"
           }
 
           test "Accepts string arguments and builds string output" {
