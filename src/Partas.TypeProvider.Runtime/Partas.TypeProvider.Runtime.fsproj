@@ -10,7 +10,7 @@
         <PackageId>Partas.TypeProvider.BuildHelper</PackageId>
         <Title>Partas.TypeProvider.BuildHelper</Title>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Version>0.2.4</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
+    <Version>0.2.5</Version><AssemblyVersion>0.0.0.0</AssemblyVersion></PropertyGroup>
 
     <ItemGroup>
         <None Include="../../README.md" Pack="true" PackagePath="\" />
