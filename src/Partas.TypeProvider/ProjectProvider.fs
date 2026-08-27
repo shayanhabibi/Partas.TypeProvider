@@ -216,12 +216,31 @@ let make
                 projectType
 
     let getAllProjectsMethod =
+        let projectSequences =
+            projects
+            |> List.map (fun p ->
+                p.Directory,
+                p.Name,
+                p.Path,
+                p.RelativePath
+                )
+        let evaluated = <@@
+            let projects = projectSequences
+            in (
+                projects
+                |> List.map (fun (dir, name, path, relPath) -> {
+                    Project.ProjectRef.Directory = dir
+                    Project.ProjectRef.Name = name
+                    Project.ProjectRef.Path = path
+                    Project.ProjectRef.RelativePath = relPath
+                }))
+        @@>
         ProvidedMethod(
             "AllProjects",
             [ ProvidedParameter("searchRuntime", typeof<bool>, optionalValue = false) ],
             typeof<Project.ProjectRef list>,
             isStatic = true,
-            invokeCode = fun args -> <@@ if not (%%args[0]: bool) then projects else Project.discover root @@>
+            invokeCode = fun args -> <@@ if not (%%args[0]: bool) then (%%evaluated : Project.ProjectRef list) else Project.discover root @@>
             ).addXmlDoc {
             summary { "All projects found. Pass"; c { "true" }; "to retrieve the projects at runtime." }
             param "searchRuntime" { "Whether to only return projects that have been evaluated at runtime." }

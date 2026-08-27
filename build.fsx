@@ -37,6 +37,7 @@ module Options =
             | projects -> projects |> List.map (fun p -> Map.find p.Value projectMap)
             )
         |> Input.arity Arity.OneOrMore
+        |> InputSpec.ofInput
     let config =
         InputSpec.ofInput Baked.Input.DotNet.configString
         |> InputSpec.map (Option.defaultValue "Release")
