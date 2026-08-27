@@ -102,14 +102,14 @@ let build (project: InputSpec<string>) = input {
 }
 let pack (project: InputSpec<string>) = input {
     let! project = project
-    return stage $"pack-{project}" {
-        quiet
+    return stage "pack" {
         run (cmd $"dotnet pack {project} --no-restore -o {Repo.VirtualFileSystem.bin.``.``}")
     }
 }
 let publish (project: InputSpec<string>) = input {
     let! key = Baked.Input.NuGet.apiKeyOrEnv
-    return stage $"publish-{project}" {
+    and! project = project
+    return stage "publish" {
         when' key.IsSome
         failIfIgnored
         runSensitive
@@ -169,7 +169,7 @@ rootCommand (Array.tail fsi.CommandLineArgs) {
         build path
         runTests
         pack path
-        (System.IO.Path.Combine(Repo.VirtualFileSystem.bin.ToString(), "*.nupkg"))
+        Path.combine (Repo.VirtualFileSystem.bin.ToString()) "*.nupkg"
         |> InputSpec.ret
         |> publish
     }
